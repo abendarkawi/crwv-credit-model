@@ -1,0 +1,939 @@
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+from model import build_model, get_defaults, get_scenario_assumptions, SCENARIOS
+from data import (PEERS, BONDS, SECURED_DEBT, PRICE_DATA, OPERATING_DATA,
+                  RECENT_EVENTS, PF_DEBT_M, PF_LTV_PCT, NEW_DEBT_APRIL_2026_M)
+
+st.set_page_config(page_title="CoreWeave Credit Model | CRWV", layout="wide",
+                   initial_sidebar_state="expanded")
+
+st.markdown("""
+<style>
+[data-testid="stSidebar"] { background:#111827; }
+.metric-card { background:#1f2937; border-radius:8px; padding:14px; margin:2px; }
+.metric-label { font-size:11px; color:#9ca3af; text-transform:uppercase; letter-spacing:.05em; }
+.metric-value { font-size:22px; font-weight:700; color:#f9fafb; margin:4px 0; }
+.metric-delta { font-size:11px; }
+.green  { color:#10b981; } .red { color:#ef4444; } .yellow { color:#f59e0b; }
+.section-hdr { font-size:12px; font-weight:600; color:#6b7280; text-transform:uppercase;
+               letter-spacing:.08em; margin:14px 0 6px; border-bottom:1px solid #374151;
+               padding-bottom:3px; }
+.quality-warn { background:#7f1d1d22; border-left:3px solid #ef4444;
+                padding:10px 14px; border-radius:4px; margin:8px 0; font-size:13px; }
+</style>
+""", unsafe_allow_html=True)
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def fm(v, d=0):
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    if abs(v) >= 1000: return f"${v/1000:,.{d}f}B"
+    return f"${v:,.{d}f}M"
+
+def fp(v, d=1):
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    return f"{v:.{d}f}%"
+
+def fx(v, d=1):
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    return f"{v:.{d}f}x"
+
+def signed(v, d=0):
+    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+    if abs(v) >= 1000: s = f"${abs(v)/1000:,.{d}f}B"
+    else:              s = f"${abs(v):,.{d}f}M"
+    return f"({s})" if v < 0 else s
+
+BLUE=  "#3b82f6"; ORANGE="#f97316"; GREEN="#10b981"
+RED=   "#ef4444"; YELLOW="#f59e0b"; GRAY="#6b7280"
+PURPLE="#8b5cf6"
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("## ⚡ CoreWeave Credit Model")
+    st.caption("CRWV | May 2026 | SEC filings + press releases")
+    st.divider()
+
+    with st.expander("MW Online — Core Driver", expanded=True):
+        st.markdown('<div class="section-hdr">Quarterly 2026</div>', unsafe_allow_html=True)
+        mw_q1 = st.slider("Q1 2026E", 500, 2500, 1050, 50,
+            help="Rec (Base): 950 MW. Implied by Q1 guidance $1.9–2.0B at $1.82M/MW. FY2025 exited 850 MW.")
+        mw_q2 = st.slider("Q2 2026E", 500, 3000, 1500, 50,
+            help="Rec (Base): 1,300 MW. Significant ramp as contracted 3.1 GW comes online.")
+        mw_q3 = st.slider("Q3 2026E", 500, 4000, 2000, 100,
+            help="Rec (Base): 1,750 MW. Blackwell deployments accelerate; OpenAI/Meta contracts ramp.")
+        mw_q4 = st.slider("Q4 2026E", 500, 5000, 2500, 100,
+            help="Rec (Base): 2,200 MW. H2 ramp consistent with $11–13B full-year revenue range.")
+        st.markdown('<div class="section-hdr">Annual 2027–2029 (avg. active MW)</div>', unsafe_allow_html=True)
+        mw_27 = st.slider("FY 2027E", 1000, 7000, 3200, 100,
+            help="Rec (Base): 2,900 MW. Mid-point of 3.1 GW contracted; includes incremental DDTL-funded builds.")
+        mw_28 = st.slider("FY 2028E", 1000, 9000, 4200, 100,
+            help="Rec (Base): 3,600 MW. Continued build-out; mgmt flagged 5,000+ MW additional by 2030.")
+        mw_29 = st.slider("FY 2029E", 1000, 12000, 5000, 100,
+            help="Rec (Base): 4,200 MW. Approaching the 5,000 MW additional target for 2030.")
+
+    with st.expander("Unit Economics"):
+        rev_per_mw   = st.number_input("Revenue / MW / Qtr ($M)", 0.5, 5.0, 1.85, 0.05,
+            help="Base: $1.82M. FY2025 implied: $1.85M. Blackwell may lift 5–10% (bull). Bear: pricing normalises to ~$1.70M.")
+        gross_margin = st.slider("Gross Margin (%)", 50, 85, 72,
+            help="FY2025: 71.7%. May compress on lower-margin Blackwell or power cost inflation.")
+        st.markdown("**Adj. EBITDA Margin** — *see quality note in Credit Metrics tab*")
+        em_26 = st.slider("2026E", 40, 70, 55,
+            help="Base: 53%. Bottoms Q1 2026 per mgmt. Full-year compresses on opex build and interest headwinds.")
+        em_27 = st.slider("2027E", 40, 75, 57, help="Base: 55%. Gradual margin expansion as scale drives opex leverage.")
+        em_28 = st.slider("2028E", 45, 80, 59, help="Base: 57%.")
+        em_29 = st.slider("2029E", 45, 80, 61, help="Base: 59%. LT mgmt target 25–30% GAAP ≈ 55–65% EBITDA.")
+
+    with st.expander("Capex"):
+        capex_per_mw = st.number_input("Build Cost / New MW ($M)", 2.0, 20.0, 8.0, 0.5,
+            help="All-in cost per MW. H100/H200 cluster ~$8–12M/MW. Blackwell may be higher initially.")
+        maint_pct    = st.slider("Maintenance Capex (% Revenue)", 0, 10, 3,
+            help="Ongoing maintenance. Note: GPU useful life ~3–5 yrs; true economic maintenance capex is higher.")
+
+    with st.expander("Debt & Interest"):
+        td_26 = st.slider("Total Debt FY2026E ($B)", 20, 100, 47, 1,
+            help="Base: $47B. Q4 2025: $21.4B + Apr '26 confirmed raises ($9.85B) + continued draws to fund capex. "
+                 "Apr '26 raise: DDTL 5.0 $3.1B (SOFR+450, 99 OID) + HY $2.75B + converts $4B.") * 1000.0
+        td_27 = st.slider("Total Debt FY2027E ($B)", 30, 130, 62, 2,
+            help="Base: $64B. DDTL 1.0 matures Mar 2028 — must refinance ~$2.3B. Continued capex draws.") * 1000.0
+        td_28 = st.slider("Total Debt FY2028E ($B)", 30, 150, 75, 2,
+            help="Base: $75B. Peak leverage year in base case. FCF improves but still deeply negative.") * 1000.0
+        td_29 = st.slider("Total Debt FY2029E ($B)", 20, 150, 68, 2,
+            help="Base: $72B. Bull: deleveraging begins. Bear: $94B+ with no FCF inflection.") * 1000.0
+        int_rate = st.slider("Blended Interest Rate (%)", 5.0, 15.0, 8.25, 0.25,
+            help="Base: 8.2%. Apr '26 1.75% converts ($4B) drag blended rate lower; offset by SOFR+450 DDTL. "
+                 "FY2025 implied ~8.5%. Blended on $31B+ PF stack.")
+
+    with st.expander("EBITDA Quality & Other"):
+        sbc_pct = st.slider("SBC (% Revenue)", 5, 25, 14,
+            help="FY2025 implied: ~13.4% (Adj. EBITDA $3.09B − GAAP EBITDA $2.41B = $685M). "
+                 "Real economic cost. Credit metrics on CASH EBITDA basis shown in Credit tab.")
+        da_pct   = st.slider("D&A (% Revenue)", 20, 80, 47,
+            help="FY2025 implied: ~47%. D&A is a real wearing-out of GPU assets (3–5yr life). "
+                 "High D&A + high SBC = large gap between Adj. EBITDA and economic earnings.")
+        tax_rate = st.slider("Cash Tax Rate (%)", 0, 35, 5,
+            help="Large NOL carryforward. Minimal cash taxes near-term. Full statutory ~2028E+.")
+        eq_book  = st.number_input("Book Equity ($M)", 1000, 20000, 5000, 500,
+            help="Estimated post-IPO book equity less accumulated deficit. Used for ROIC/WACC.")
+        coe      = st.slider("Cost of Equity (%)", 10, 30, 18,
+            help="High-beta AI infra; beta ~2.5+. 18–22% under CAPM. Core to ROIC vs. WACC debate.")
+        wc_days  = st.slider("WC Days", 5, 30, 15,
+            help="Net WC as days of revenue growth. Builds as revenue scales.")
+
+# ── Build custom model + scenario models ─────────────────────────────────────
+custom_a = {
+    "mw": {"Q1 2026E": mw_q1, "Q2 2026E": mw_q2, "Q3 2026E": mw_q3, "Q4 2026E": mw_q4,
+           "FY 2027E": mw_27, "FY 2028E": mw_28, "FY 2029E": mw_29},
+    "rev_per_mw": rev_per_mw, "gross_margin": gross_margin,
+    "ebitda_margin_2026": em_26, "ebitda_margin_2027": em_27,
+    "ebitda_margin_2028": em_28, "ebitda_margin_2029": em_29,
+    "capex_per_mw": capex_per_mw, "maint_capex_pct": maint_pct,
+    "total_debt_2026": td_26, "total_debt_2027": td_27,
+    "total_debt_2028": td_28, "total_debt_2029": td_29,
+    "interest_rate": int_rate, "da_pct": da_pct, "sbc_pct": sbc_pct,
+    "tax_rate": tax_rate, "equity_book": eq_book, "cost_of_equity": coe,
+    "wc_days": wc_days,
+}
+
+sc_models = {k: build_model(get_scenario_assumptions(k)) for k in SCENARIOS}
+custom_m    = build_model(custom_a)
+df          = custom_m["all"]
+qdf         = custom_m["quarterly"]
+adf         = custom_m["annual"]
+latest_q    = qdf[qdf["is_actual"]].iloc[-1]
+
+# ── Header ────────────────────────────────────────────────────────────────────
+h1, h2, h3 = st.columns([3, 1, 1])
+with h1:
+    st.markdown("## CoreWeave, Inc. (CRWV)")
+    st.caption("GPU Cloud Infrastructure | HY Credit | B+/Ba3 Issuer | 9.00–9.75% Sr Notes")
+with h2:
+    st.metric("Stock Price", f"${PRICE_DATA['current']:.2f}",
+              f"YTD: +{(PRICE_DATA['current']/PRICE_DATA['price_ytd_start']-1)*100:.1f}%")
+with h3:
+    st.metric("Enterprise Value", f"${PRICE_DATA['ev_b']:.1f}B",
+              f"Mkt Cap: ${PRICE_DATA['market_cap_b']:.1f}B")
+
+st.divider()
+
+# ── Tabs ──────────────────────────────────────────────────────────────────────
+tabs = st.tabs(["📊 Summary", "📈 Income Statement", "💸 Cash Flow",
+                "🏦 Credit Metrics", "🗂 Balance Sheet", "📐 ROIC / ROA", "🔍 Relative Value"])
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 1 — SUMMARY
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[0]:
+    ltm_rev    = latest_q.get("revenue_ttm")
+    ltm_ebitda = latest_q.get("adj_ebitda_ttm")
+    ltm_ce     = latest_q.get("cash_ebitda_ttm")
+    icr        = latest_q.get("icr_ttm")
+    cash_icr   = latest_q.get("cash_icr_ttm")
+    net_lev    = latest_q.get("net_lev")
+
+    k1,k2,k3,k4,k5,k6 = st.columns(6)
+    with k1: st.metric("LTM Revenue",        fm(ltm_rev,1))
+    with k2: st.metric("LTM Adj. EBITDA",    fm(ltm_ebitda,1),
+                       fp(ltm_ebitda/ltm_rev*100 if ltm_rev else None)+" margin")
+    with k3: st.metric("LTM Cash EBITDA",    fm(ltm_ce,1),
+                       "ex-SBC — credit basis")
+    with k4: st.metric("ICR (TTM)",          fx(icr),
+                       f"Cash ICR: {fx(cash_icr)}")
+    with k5: st.metric("Net Leverage",       fx(net_lev),
+                       "⚠ high" if net_lev and net_lev > 5 else "ok")
+    with k6: st.metric("MW Online",          f"{int(latest_q['mw_online']):,} MW",
+                       f"RPO ~${OPERATING_DATA['backlog_current_b']:.0f}B")
+
+    # PF metrics row — reflects April 2026 confirmed raises
+    p1, p2, p3, p4 = st.columns(4)
+    with p1:
+        st.metric("PF Total Debt (Apr '26)",
+                  f"${PF_DEBT_M/1000:.1f}B",
+                  f"+${NEW_DEBT_APRIL_2026_M/1000:.2f}B Apr raises vs Q4'25")
+    with p2:
+        st.metric("PF LTV (Debt / EV)",
+                  f"{PF_LTV_PCT:.1f}%",
+                  f"PF Debt ${PF_DEBT_M/1000:.1f}B / EV ${PRICE_DATA['ev_b']:.0f}B",
+                  delta_color="inverse")
+    with p3:
+        gross_lev_q = latest_q.get("gross_lev")
+        st.metric("Gross Leverage (TTM)",
+                  fx(gross_lev_q),
+                  "Total Debt / Adj. EBITDA")
+    with p4:
+        st.metric(f"Next Earnings — {OPERATING_DATA['next_earnings_quarter']}",
+                  OPERATING_DATA["next_earnings_date_est"],
+                  f"FY26 guide: ${OPERATING_DATA['guidance_rev_low']//1000}–{OPERATING_DATA['guidance_rev_high']//1000}B rev | ${OPERATING_DATA['guidance_capex_low']//1000}–{OPERATING_DATA['guidance_capex_high']//1000}B capex")
+
+    st.divider()
+
+    # ── Scenario comparison charts ────────────────────────────────────────────
+    st.markdown("**Scenario Comparison — Base / Bull / Bear + Custom**")
+    st.caption("Sidebar inputs = Custom. Scenarios are fixed assumptions — see rationale in credit assessment below.")
+
+    ann_periods = ["FY 2024","FY 2025","FY 2026E","FY 2027E","FY 2028E","FY 2029E"]
+
+    def sc_ann(key, col):
+        m = sc_models[key]
+        rows = m["all"][m["all"]["period"].isin(ann_periods)].set_index("period")
+        return [rows.loc[p, col] if p in rows.index else None for p in ann_periods]
+
+    def custom_ann(col):
+        rows = df[df["period"].isin(ann_periods)].set_index("period")
+        return [rows.loc[p, col] if p in rows.index else None for p in ann_periods]
+
+    ch1, ch2 = st.columns(2)
+    with ch1:
+        st.markdown("*Revenue ($M)*")
+        fig = go.Figure()
+        # Actuals bar
+        act_vals  = sc_ann("base", "revenue")[:2]
+        proj_base = [None, None] + sc_ann("base",  "revenue")[2:]
+        proj_bull = [None, None] + sc_ann("bull",  "revenue")[2:]
+        proj_bear = [None, None] + sc_ann("bear",  "revenue")[2:]
+        proj_cust = [None, None] + custom_ann("revenue")[2:]
+        fig.add_bar(x=ann_periods, y=act_vals + [None]*4, name="Actual", marker_color=GRAY)
+        fig.add_scatter(x=ann_periods, y=proj_base, mode="lines+markers", name="Base",
+                        line=dict(color=BLUE,   width=2))
+        fig.add_scatter(x=ann_periods, y=proj_bull, mode="lines+markers", name="Bull",
+                        line=dict(color=GREEN,  width=2))
+        fig.add_scatter(x=ann_periods, y=proj_bear, mode="lines+markers", name="Bear",
+                        line=dict(color=RED,    width=2))
+        fig.add_scatter(x=ann_periods, y=proj_cust, mode="lines+markers", name="Custom",
+                        line=dict(color=ORANGE, width=2, dash="dot"))
+        fig.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                          font=dict(color="#d1d5db"), legend=dict(orientation="h", y=1.12),
+                          yaxis=dict(gridcolor="#1f2937"), height=300, margin=dict(t=5,b=30))
+        st.plotly_chart(fig, use_container_width=True)
+
+    with ch2:
+        st.markdown("*FCF ($M) — negative = burning cash*")
+        fig2 = go.Figure()
+        fig2.add_bar(x=ann_periods, y=[None,None]+[None]*4, name="")  # spacer
+        for key, col, name in [("base","fcf","Base"),("bull","fcf","Bull"),
+                                ("bear","fcf","Bear")]:
+            vals = [None, None] + sc_ann(key, col)[2:]
+            fig2.add_scatter(x=ann_periods, y=vals, mode="lines+markers", name=name,
+                             line=dict(color=SCENARIOS[key]["color"], width=2))
+        cust_fcf = [None, None] + custom_ann("fcf")[2:]
+        fig2.add_scatter(x=ann_periods, y=cust_fcf, mode="lines+markers", name="Custom",
+                         line=dict(color=ORANGE, width=2, dash="dot"))
+        fig2.add_hline(y=0, line_color="#374151", line_width=1)
+        fig2.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                           font=dict(color="#d1d5db"), legend=dict(orientation="h", y=1.12),
+                           yaxis=dict(gridcolor="#1f2937"), height=300, margin=dict(t=5,b=30))
+        st.plotly_chart(fig2, use_container_width=True)
+
+    ch3, ch4 = st.columns(2)
+    with ch3:
+        st.markdown("*Net Leverage (x) — Net Debt / Adj. EBITDA*")
+        fig3 = go.Figure()
+        def _get(m_all, p, col):
+            rows = m_all[m_all["period"] == p]
+            if rows.empty or col not in rows.columns: return None
+            v = rows[col].values[0]
+            return None if pd.isna(v) else float(v)
+
+        for key in ["base","bull","bear"]:
+            vals = [None, None] + [_get(sc_models[key]["all"], p, "net_lev")
+                                   for p in ann_periods[2:]]
+            fig3.add_scatter(x=ann_periods, y=vals, mode="lines+markers",
+                             name=SCENARIOS[key]["label"],
+                             line=dict(color=SCENARIOS[key]["color"], width=2))
+        cust_nl = [None, None] + [_get(df, p, "net_lev") for p in ann_periods[2:]]
+        fig3.add_scatter(x=ann_periods, y=cust_nl, mode="lines+markers", name="Custom",
+                         line=dict(color=ORANGE, width=2, dash="dot"))
+        fig3.add_hline(y=6, line_color=YELLOW, line_dash="dash", line_width=1, annotation_text="6x")
+        fig3.add_hline(y=4, line_color=GREEN,  line_dash="dash", line_width=1, annotation_text="4x")
+        fig3.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                           font=dict(color="#d1d5db"), legend=dict(orientation="h", y=1.12),
+                           yaxis=dict(gridcolor="#1f2937"), height=300, margin=dict(t=5,b=30))
+        st.plotly_chart(fig3, use_container_width=True)
+
+    with ch4:
+        st.markdown("*Total Debt ($M)*")
+        fig4 = go.Figure()
+        for key in ["base","bull","bear"]:
+            vals = [None, None] + [
+                sc_models[key]["all"][sc_models[key]["all"]["period"]==p]["total_debt"].values[0]
+                if p in sc_models[key]["all"]["period"].values else None
+                for p in ann_periods[2:]
+            ]
+            fig4.add_scatter(x=ann_periods, y=vals, mode="lines+markers",
+                             name=SCENARIOS[key]["label"],
+                             line=dict(color=SCENARIOS[key]["color"], width=2))
+        fig4.add_bar(x=ann_periods[:2],
+                     y=[df[df["period"]==p]["total_debt"].values[0] if p in df["period"].values
+                        else None for p in ann_periods[:2]],
+                     name="Actual", marker_color=GRAY)
+        fig4.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                           font=dict(color="#d1d5db"), legend=dict(orientation="h", y=1.12),
+                           yaxis=dict(gridcolor="#1f2937"), height=300, margin=dict(t=5,b=30))
+        st.plotly_chart(fig4, use_container_width=True)
+
+    # Scenario summary table
+    st.markdown("**Scenario Summary — Annual Forecasts**")
+    sc_rows = []
+    for p in ann_periods[2:]:
+        row = {"Period": p}
+        for key in ["bear","base","bull"]:
+            m = sc_models[key]["all"]
+            r = m[m["period"]==p]
+            if r.empty: continue
+            row[f"{SCENARIOS[key]['label']} Rev ($M)"]    = fm(r["revenue"].iloc[0])
+            row[f"{SCENARIOS[key]['label']} EBITDA Mgn"]  = fp(r["ebitda_margin_pct"].iloc[0])
+            row[f"{SCENARIOS[key]['label']} FCF ($M)"]    = signed(r["fcf"].iloc[0])
+            row[f"{SCENARIOS[key]['label']} Net Lev"]     = fx(r["net_lev"].iloc[0])
+        sc_rows.append(row)
+    st.dataframe(pd.DataFrame(sc_rows).set_index("Period"), use_container_width=True)
+
+    # Credit assessment
+    st.divider()
+    st.markdown("**Credit Assessment**")
+    ca1, ca2, ca3 = st.columns(3)
+    with ca1:
+        st.markdown(f"""
+**🐂 Bull Case**
+*{SCENARIOS['bull']['rationale']}*
+
+Key metrics by FY2029E:
+- Revenue: ~${sc_ann('bull','revenue')[-1]/1000:.0f}B
+- Net Leverage: ~{fx(sc_models['bull']['all'][sc_models['bull']['all']['period']=='FY 2029E']['net_lev'].values[0] if 'FY 2029E' in sc_models['bull']['all']['period'].values else None)}
+- FCF: {signed(sc_ann('bull','fcf')[-1])}
+        """)
+    with ca2:
+        st.markdown(f"""
+**📊 Base Case** *(credit investor anchor)*
+*{SCENARIOS['base']['rationale']}*
+
+Key metrics by FY2029E:
+- Revenue: ~${sc_ann('base','revenue')[-1]/1000:.0f}B
+- Net Leverage: ~{fx(sc_models['base']['all'][sc_models['base']['all']['period']=='FY 2029E']['net_lev'].values[0] if 'FY 2029E' in sc_models['base']['all']['period'].values else None)}
+- FCF: {signed(sc_ann('base','fcf')[-1])}
+        """)
+    with ca3:
+        st.markdown(f"""
+**🐻 Bear Case**
+*{SCENARIOS['bear']['rationale']}*
+
+Key metrics by FY2029E:
+- Revenue: ~${sc_ann('bear','revenue')[-1]/1000:.0f}B
+- Net Leverage: ~{fx(sc_models['bear']['all'][sc_models['bear']['all']['period']=='FY 2029E']['net_lev'].values[0] if 'FY 2029E' in sc_models['bear']['all']['period'].values else None)}
+- FCF: {signed(sc_ann('bear','fcf')[-1])}
+        """)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 2 — INCOME STATEMENT
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[1]:
+    show_q = st.toggle("Show quarterly periods", value=True)
+    if show_q:
+        inc_df = df[(df["is_quarterly"]) |
+                    (df["period"].isin(["FY 2022","FY 2023"])) |
+                    (~df["is_quarterly"] & ~df["is_actual"] &
+                     ~df["period"].str.match(r"FY (2024|2025)$"))].copy()
+    else:
+        inc_df = df[~df["is_quarterly"]].copy()
+    inc_df = inc_df.sort_values(["year","quarter"]).reset_index(drop=True)
+    cols_p = inc_df["period"].tolist()
+
+    def make_row(label, vals, fmt_fn):
+        row = {"Metric": label}
+        for p, v in zip(cols_p, vals):
+            row[p] = fmt_fn(v)
+        return row
+
+    rev  = inc_df["revenue"].tolist()
+    gp   = inc_df["gross_profit"].tolist()
+    eb   = inc_df["adj_ebitda"].tolist()
+    sbc  = inc_df["sbc"].tolist()
+    ce   = inc_df["cash_ebitda"].tolist()
+    da   = inc_df["da"].tolist()
+    ebit = inc_df["ebit"].tolist()
+    ie   = inc_df["interest_expense"].tolist()
+    ni   = inc_df["net_income"].tolist()
+    mw   = inc_df["mw_online"].tolist()
+
+    def pct_ch(s):
+        out = []
+        for i,v in enumerate(s):
+            if i==0 or not s[i-1] or pd.isna(s[i-1]) or s[i-1]==0: out.append(None)
+            else: out.append((v/s[i-1]-1)*100)
+        return out
+
+    tbl = [
+        make_row("Revenue ($M)",           rev,  fm),
+        make_row("  YoY Growth",            pct_ch(rev),
+                 lambda v: f"{v:+.1f}%" if v is not None and not pd.isna(v) else "NM"),
+        make_row("Gross Profit ($M)",       gp,   fm),
+        make_row("  Gross Margin",           [g/r*100 if r else None for g,r in zip(gp,rev)], fp),
+        make_row("",                        [""]*len(cols_p), str),
+        make_row("Adj. EBITDA ($M)",        eb,   fm),
+        make_row("  Adj. EBITDA Margin",    [e/r*100 if r else None for e,r in zip(eb,rev)], fp),
+        make_row("  Less: SBC (est.)",      [-s if s else None for s in sbc], fm),
+        make_row("= Cash EBITDA ($M) ⚠",   ce,   fm),
+        make_row("  Cash EBITDA Margin",    [c/r*100 if r else None for c,r in zip(ce,rev)], fp),
+        make_row("",                        [""]*len(cols_p), str),
+        make_row("D&A — est. ($M)",         da,   fm),
+        make_row("EBIT — est. ($M)",        ebit, fm),
+        make_row("  EBIT Margin",           [e/r*100 if r and e and not pd.isna(e) else None
+                                              for e,r in zip(ebit,rev)], fp),
+        make_row("",                        [""]*len(cols_p), str),
+        make_row("Interest Expense ($M)",   ie,   fm),
+        make_row("Net Income — est. ($M)",  ni,   fm),
+        make_row("",                        [""]*len(cols_p), str),
+        make_row("MW Online (EOP)",         mw,
+                 lambda v: f"{int(v):,}" if v and not pd.isna(v) else "—"),
+    ]
+
+    st.dataframe(pd.DataFrame(tbl).set_index("Metric"), use_container_width=True, height=560)
+    st.markdown('<div class="quality-warn">⚠ <b>EBITDA Quality Note:</b> '
+                '"Cash EBITDA" deducts estimated stock-based comp (~13–15% of revenue). '
+                'FY2025 implied SBC ~$685M — the entire gap between Adj. EBITDA ($3.09B) and GAAP EBITDA ($2.41B). '
+                'D&A (~47% of revenue) represents real GPU asset wearing-out (3–5yr life); '
+                'replacement capex is not optional. Credit ICR on Cash EBITDA basis is materially lower. '
+                'See Credit Metrics tab.</div>', unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — CASH FLOW
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[2]:
+    # Annual periods to display (years as columns)
+    cf_periods = df[~df["is_quarterly"]].sort_values("year").copy()
+    cf_p = cf_periods["period"].tolist()
+
+    def cf_row(label, col, fmt_fn=fm, negate=False):
+        row = {"Item": label}
+        for p in cf_p:
+            v = cf_periods[cf_periods["period"]==p][col].values
+            v = v[0] if len(v) else None
+            if v is not None and not pd.isna(v) and negate:
+                v = -v
+            row[p] = fmt_fn(v)
+        return row
+
+    show_fin = st.toggle("Show full financing walk (below FCF → net change in cash)", value=False)
+
+    # Build the CF walk table (items as rows, years as columns)
+    cf_rows = [
+        cf_row("Adj. EBITDA ($M)",         "adj_ebitda"),
+        cf_row("  Less: Cash Interest",    "interest_expense", negate=True),
+        cf_row("  Less: Cash Taxes",       "cash_tax",         negate=True),
+        cf_row("  ± Change in NWC",        "dwc"),
+        cf_row("  ± Other",               "other_financing",  fmt_fn=lambda v: fm(v) if v else "—"),
+        {"Item": "= CFO ($M)", **{p: fm(cf_periods[cf_periods["period"]==p]["cfo"].values[0])
+                                   if p in cf_periods["period"].values else "—" for p in cf_p}},
+        cf_row("  Less: Capex",            "capex",            negate=True),
+        {"Item": "= FCF ($M)", **{p: fm(cf_periods[cf_periods["period"]==p]["fcf"].values[0])
+                                   if p in cf_periods["period"].values else "—" for p in cf_p}},
+    ]
+
+    if show_fin:
+        cf_rows += [
+            {"Item": "── Financing ──", **{p: "" for p in cf_p}},
+            cf_row("  + Change in Debt",   "change_in_debt"),
+            cf_row("  + Equity Raised",    "equity_raised"),
+            cf_row("  + Other Financing",  "other_financing"),
+            {"Item": "= Net Change in Cash ($M)",
+             **{p: fm(cf_periods[cf_periods["period"]==p]["net_change_cash"].values[0])
+                if p in cf_periods["period"].values and
+                   "net_change_cash" in cf_periods.columns and
+                   not pd.isna(cf_periods[cf_periods["period"]==p]["net_change_cash"].values[0])
+                else "—" for p in cf_p}},
+            {"Item": "  Beginning Cash",
+             **{p: "—" for p in cf_p}},
+            {"Item": "  Ending Cash ($M)",
+             **{p: fm(cf_periods[cf_periods["period"]==p]["cash"].values[0])
+                if p in cf_periods["period"].values else "—" for p in cf_p}},
+        ]
+
+    cf_tbl = pd.DataFrame(cf_rows).set_index("Item")
+    st.dataframe(cf_tbl, use_container_width=True, height=420 if show_fin else 310)
+    st.caption("Historical CFO/FCF estimated using consistent methodology. "
+               "Actual reported CFO may differ due to non-cash items and WC classification. "
+               "Change in Debt = model-projected debt issuance to fund capex gap.")
+
+    st.divider()
+
+    # Waterfall for selected projected annual period
+    proj_ann = df[~df["is_quarterly"] & ~df["is_actual"] & df["fcf"].notna()]
+    if not proj_ann.empty:
+        sel_period = st.selectbox("Waterfall period", proj_ann["period"].tolist(), index=0)
+        row = proj_ann[proj_ann["period"] == sel_period].iloc[0]
+
+        labels   = ["Adj. EBITDA", "– Interest", "– Tax", "± ΔWC", "= CFO", "– Capex", "= FCF"]
+        vals     = [row["adj_ebitda"], -row["interest_expense"],
+                    -(row.get("cash_tax") or 0), row.get("dwc") or 0,
+                    row.get("cfo") or 0, -row["capex"], row.get("fcf") or 0]
+        measures = ["relative","relative","relative","relative","total","relative","total"]
+
+        if show_fin:
+            labels  += ["+ ΔDebt",          "+ ΔEquity",           "= Net ΔCash"]
+            vals    += [row.get("change_in_debt") or 0,
+                        row.get("equity_raised")  or 0,
+                        row.get("net_change_cash") or 0]
+            measures+= ["relative","relative","total"]
+
+        fig_wf = go.Figure(go.Waterfall(
+            measure=measures, x=labels, y=vals,
+            connector=dict(line=dict(color="#374151")),
+            increasing=dict(marker_color=GREEN),
+            decreasing=dict(marker_color=RED),
+            totals=dict(marker_color=BLUE),
+            texttemplate="%{y:+,.0f}M", textposition="outside",
+        ))
+        fig_wf.update_layout(
+            title=f"Cash Flow Walk — {sel_period}",
+            plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+            font=dict(color="#d1d5db"), showlegend=False,
+            height=400, margin=dict(t=40,b=20),
+            yaxis=dict(gridcolor="#1f2937"),
+        )
+        st.plotly_chart(fig_wf, use_container_width=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — CREDIT METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[3]:
+    qcr     = qdf[qdf["icr_ttm"].notna()]
+    last_cr = qcr.iloc[-1]
+
+    # EBITDA quality box — prominent
+    sbc_v   = last_cr.get("adj_ebitda_ttm",0) - last_cr.get("cash_ebitda_ttm",0)
+    adj_icr = last_cr.get("icr_ttm")
+    cash_icr_v = last_cr.get("cash_icr_ttm")
+    adj_lev = last_cr.get("net_lev")
+    cash_lev= last_cr.get("cash_net_lev")
+
+    st.markdown("""<div class="quality-warn">
+⚠ <b>EBITDA Quality — Credit Investors Should Use Cash EBITDA</b><br>
+CoreWeave's Adj. EBITDA adds back stock-based compensation (~13–15% of revenue, ~$685M in FY2025).
+SBC is a real economic cost that dilutes equity holders and represents ongoing compensation expense.
+D&A (~47% of revenue) reflects real GPU asset depreciation — GPUs have 3–5yr useful lives,
+so the asset base requires continuous heavy reinvestment. The gap between Adj. EBITDA and FCF is not
+transitory; it is structural to the business model through at least 2028.
+</div>""", unsafe_allow_html=True)
+
+    # KPI cards
+    c1,c2,c3,c4 = st.columns(4)
+    def card(col, lbl, val, sub, cls):
+        col.markdown(f"""<div class="metric-card">
+            <div class="metric-label">{lbl}</div>
+            <div class="metric-value {cls}">{val}</div>
+            <div class="metric-delta">{sub}</div></div>""", unsafe_allow_html=True)
+
+    card(c1, "ICR — Adj. EBITDA (TTM)", fx(adj_icr),
+         f"Cash EBITDA ICR: {fx(cash_icr_v)}",
+         "green" if adj_icr and adj_icr>=2.5 else "yellow" if adj_icr and adj_icr>=2 else "red")
+    card(c2, "Net Leverage — Adj. EBITDA", fx(adj_lev),
+         f"Cash EBITDA basis: {fx(cash_lev)}",
+         "green" if adj_lev and adj_lev<=4 else "yellow" if adj_lev and adj_lev<=6 else "red")
+    card(c3, "Gross Leverage", fx(last_cr.get("gross_lev")),
+         "Total Debt / Adj. EBITDA TTM",
+         "green" if last_cr.get("gross_lev",99)<=5 else "yellow" if last_cr.get("gross_lev",99)<=7 else "red")
+    card(c4, "Debt Service (EBITDA−Capex)/Int", fx(last_cr.get("debt_svc")),
+         "Negative = burning cash vs. debt cost",
+         "red" if last_cr.get("debt_svc",0)<0 else "yellow" if last_cr.get("debt_svc",0)<1 else "green")
+
+    st.divider()
+    cm1, cm2 = st.columns(2)
+    with cm1:
+        st.markdown("**ICR — Adj. EBITDA vs. Cash EBITDA (TTM)**")
+        fig_icr = go.Figure()
+        act_cr = qcr[qcr["is_actual"]]
+        prj_cr = qcr[~qcr["is_actual"]]
+        for sub, col, name, dash in [(act_cr,"icr_ttm","Adj. EBITDA ICR (Actual)","solid"),
+                                      (prj_cr,"icr_ttm","Adj. EBITDA ICR (Proj.)","dot"),
+                                      (act_cr,"cash_icr_ttm","Cash EBITDA ICR (Actual)","solid"),
+                                      (prj_cr,"cash_icr_ttm","Cash EBITDA ICR (Proj.)","dot")]:
+            c = BLUE if "Adj" in name else PURPLE
+            if sub.empty: continue
+            fig_icr.add_scatter(x=sub["period"], y=sub[col], mode="lines+markers",
+                                name=name, line=dict(color=c, width=2, dash=dash))
+        fig_icr.add_hline(y=2.0, line_color=YELLOW, line_dash="dash",
+                          annotation_text="2.0x floor")
+        fig_icr.add_hline(y=2.5, line_color=GREEN, line_dash="dash",
+                          annotation_text="2.5x comfortable")
+        fig_icr.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                              font=dict(color="#d1d5db"), legend=dict(orientation="h",y=1.15),
+                              yaxis=dict(gridcolor="#1f2937"), height=300, margin=dict(t=5,b=30))
+        st.plotly_chart(fig_icr, use_container_width=True)
+
+    with cm2:
+        st.markdown("**Net Leverage — Adj. EBITDA vs. Cash EBITDA (TTM)**")
+        fig_lev = go.Figure()
+        for sub, col, name, dash in [(qcr,"net_lev","Net Lev (Adj. EBITDA)","solid"),
+                                      (qcr,"cash_net_lev","Net Lev (Cash EBITDA)","dot")]:
+            act = sub[sub["is_actual"]]
+            prj = sub[~sub["is_actual"]]
+            c = RED if "Adj" in name else ORANGE
+            if not act.empty:
+                fig_lev.add_scatter(x=act["period"], y=act[col], mode="lines+markers",
+                                    name=name+" (Act.)", line=dict(color=c,width=2,dash="solid"))
+            if not prj.empty:
+                fig_lev.add_scatter(x=prj["period"], y=prj[col], mode="lines+markers",
+                                    name=name+" (Proj.)", line=dict(color=c,width=2,dash="dot"))
+        fig_lev.add_hline(y=6, line_color=YELLOW, line_dash="dash", annotation_text="6x")
+        fig_lev.add_hline(y=4, line_color=GREEN,  line_dash="dash", annotation_text="4x target")
+        fig_lev.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                              font=dict(color="#d1d5db"), legend=dict(orientation="h",y=1.15),
+                              yaxis=dict(gridcolor="#1f2937"), height=300, margin=dict(t=5,b=30))
+        st.plotly_chart(fig_lev, use_container_width=True)
+
+    st.divider()
+    st.markdown("**Debt Structure**")
+    b1, b2 = st.columns(2)
+    with b1:
+        st.markdown("*Unsecured Bonds — structurally subordinated*")
+        bdf = pd.DataFrame(BONDS)
+        bdf["face_m"] = bdf["face_m"].apply(lambda v: f"${v:,}M")
+        bdf["ytw"]    = bdf["ytw"].apply(lambda v: f"{v:.2f}%" if v else "N/A")
+        bdf.columns   = ["Name","Coupon","Maturity","Face","Rating","YTW"]
+        st.dataframe(bdf, use_container_width=True, hide_index=True)
+    with b2:
+        st.markdown("*Secured DDTL Facilities — structurally senior (GPU/contract-backed)*")
+        sdf = pd.DataFrame(SECURED_DEBT)
+        sdf["drawn_m"] = sdf["drawn_m"].apply(lambda v: f"${v:,}M")
+        sdf.columns    = ["Facility","Drawn","Rate","Maturity","Note"]
+        st.dataframe(sdf, use_container_width=True, hide_index=True)
+    st.caption("DDTL 4.0 rated A3/A (first IG-rated GPU-backed financing). "
+               "Unsecured HY notes are structurally subordinated to all DDTL facilities.")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — BALANCE SHEET
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[4]:
+    bs_df = df[~df["is_quarterly"]].sort_values("year").copy()
+    bs_p  = bs_df["period"].tolist()
+
+    def bs_row(label, col, fmt_fn=fm, negate=False):
+        row = {"Item": label}
+        for p in bs_p:
+            v = bs_df[bs_df["period"]==p][col].values
+            v = v[0] if len(v) else None
+            if v is not None and not pd.isna(v) and negate: v = -v
+            row[p] = fmt_fn(v)
+        return row
+
+    st.markdown("**Balance Sheet — Annual (estimated / projected)**")
+    st.caption("Historical items partially estimated. PP&E net = prior + capex − D&A. "
+               "Leases: FY2024 ($2.7B) and FY2025 ($8.4B) from 10-K; forward years estimated. "
+               "Book equity: FY2025 estimated post-IPO; forward years evolved via NI + SBC.")
+
+    bs_rows = [
+        {"Item": "─── ASSETS ───",         **{p: "" for p in bs_p}},
+        bs_row("Cash & Equivalents",        "cash"),
+        bs_row("Accounts Receivable (est.)", "receivables"),
+        bs_row("PP&E, Net (est.)",          "ppe_net"),
+        bs_row("Other Assets (est.)",       "other_assets"),
+        {"Item": "Total Assets (est.)",
+         **{p: fm(bs_df[bs_df["period"]==p]["total_assets"].values[0])
+            if p in bs_df["period"].values else "—" for p in bs_p}},
+        {"Item": "",                        **{p: "" for p in bs_p}},
+        {"Item": "─── LIABILITIES ───",    **{p: "" for p in bs_p}},
+        bs_row("Total Debt",                "total_debt"),
+        bs_row("Finance Leases (est.)",     "lease_liabilities"),
+        bs_row("Accounts Payable (est.)",   "accounts_payable"),
+        {"Item": "Other Liabilities (est.)",**{p: fm(500) for p in bs_p}},
+        {"Item": "Total Liabilities (est.)",
+         **{p: fm(bs_df[bs_df["period"]==p]["total_liabilities"].values[0])
+            if p in bs_df["period"].values else "—" for p in bs_p}},
+        {"Item": "",                        **{p: "" for p in bs_p}},
+        {"Item": "─── EQUITY ───",         **{p: "" for p in bs_p}},
+        bs_row("Book Equity (est.)",        "book_equity"),
+        {"Item": "",                        **{p: "" for p in bs_p}},
+        {"Item": "─── KEY METRICS ───",    **{p: "" for p in bs_p}},
+        bs_row("Net Debt",                  "net_debt"),
+        bs_row("NWC (Recv − AP, est.)",    "nwc"),
+        {"Item": "Debt / (Debt+Equity) %",
+         **{p: fp(bs_df[bs_df["period"]==p]["total_debt"].values[0] /
+                 (bs_df[bs_df["period"]==p]["total_debt"].values[0] +
+                  max(1, bs_df[bs_df["period"]==p]["book_equity"].fillna(1).values[0])) * 100)
+            if p in bs_df["period"].values else "—" for p in bs_p}},
+    ]
+
+    st.dataframe(pd.DataFrame(bs_rows).set_index("Item"), use_container_width=True, height=560)
+
+    st.divider()
+    bsc1, bsc2 = st.columns(2)
+    with bsc1:
+        st.markdown("**Asset Composition Over Time**")
+        fig_bs = go.Figure()
+        fig_bs.add_bar(x=bs_p, y=bs_df["cash"].fillna(0),         name="Cash",         marker_color=GREEN)
+        fig_bs.add_bar(x=bs_p, y=bs_df["receivables"].fillna(0),  name="Receivables",  marker_color=BLUE)
+        fig_bs.add_bar(x=bs_p, y=bs_df["ppe_net"].fillna(0),      name="PP&E Net",     marker_color=PURPLE)
+        fig_bs.add_bar(x=bs_p, y=bs_df["other_assets"].fillna(0), name="Other",        marker_color=GRAY)
+        fig_bs.update_layout(barmode="stack", plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                             font=dict(color="#d1d5db"), legend=dict(orientation="h",y=1.1),
+                             yaxis=dict(title="$M", gridcolor="#1f2937"),
+                             height=320, margin=dict(t=5,b=30))
+        st.plotly_chart(fig_bs, use_container_width=True)
+
+    with bsc2:
+        st.markdown("**Liabilities & Equity Composition**")
+        fig_le = go.Figure()
+        fig_le.add_bar(x=bs_p, y=bs_df["total_debt"],              name="Total Debt",   marker_color=RED)
+        fig_le.add_bar(x=bs_p, y=bs_df["lease_liabilities"].fillna(0), name="Leases",  marker_color=ORANGE)
+        fig_le.add_bar(x=bs_p, y=bs_df["book_equity"].fillna(0),   name="Book Equity",  marker_color=BLUE)
+        fig_le.update_layout(barmode="stack", plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                             font=dict(color="#d1d5db"), legend=dict(orientation="h",y=1.1),
+                             yaxis=dict(title="$M", gridcolor="#1f2937"),
+                             height=320, margin=dict(t=5,b=30))
+        st.plotly_chart(fig_le, use_container_width=True)
+
+    st.markdown("**NWC & Cash Through Forecast**")
+    fig_nwc = go.Figure()
+    fig_nwc.add_scatter(x=bs_p, y=bs_df["cash"],    mode="lines+markers", name="Cash",    line=dict(color=GREEN, width=2))
+    fig_nwc.add_scatter(x=bs_p, y=bs_df["nwc"],     mode="lines+markers", name="NWC",     line=dict(color=BLUE,  width=2))
+    fig_nwc.add_scatter(x=bs_p, y=-bs_df["net_debt"],mode="lines+markers", name="−Net Debt", line=dict(color=RED, width=2, dash="dot"))
+    fig_nwc.add_hline(y=0, line_color="#374151")
+    fig_nwc.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                          font=dict(color="#d1d5db"), legend=dict(orientation="h",y=1.1),
+                          yaxis=dict(title="$M", gridcolor="#1f2937"),
+                          height=280, margin=dict(t=5,b=30))
+    st.plotly_chart(fig_nwc, use_container_width=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 6 — ROIC / ROA
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[5]:
+    st.markdown("""**The Core Credit Question: Is this debt-fueled arb or a real business?**
+If ROIC < WACC, value is being destroyed even with positive EBITDA. The bull case requires ROIC to
+converge toward WACC as the asset base matures and D&A stabilises relative to revenue. The bear case:
+ROIC stays negative because the GPU fleet constantly depreciates and requires heavy reinvestment,
+and the business only earns its cost of capital during periods of supply-constrained pricing.""")
+
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        st.markdown("**ROIC vs. WACC — Custom Scenario**")
+        roic_d = df[df["roic_pct"].notna()].copy()
+        fig_r  = go.Figure()
+        for sub, dash, name in [(roic_d[roic_d["is_actual"]],"solid","ROIC (Actual)"),
+                                 (roic_d[~roic_d["is_actual"]],"dot","ROIC (Proj.)")]:
+            if sub.empty: continue
+            fig_r.add_scatter(x=sub["period"], y=sub["roic_pct"], mode="lines+markers",
+                              name=name, line=dict(color=BLUE, width=2, dash=dash))
+        fig_r.add_scatter(x=roic_d["period"], y=roic_d["wacc_pct"], mode="lines",
+                          name="WACC (est.)", line=dict(color=YELLOW, width=2, dash="longdash"))
+        fig_r.add_hline(y=0, line_color="#374151")
+        fig_r.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                            font=dict(color="#d1d5db"), legend=dict(orientation="h",y=1.1),
+                            yaxis=dict(title="%", gridcolor="#1f2937"),
+                            height=320, margin=dict(t=5,b=30))
+        st.plotly_chart(fig_r, use_container_width=True)
+
+    with rc2:
+        st.markdown("**ROIC — Base / Bull / Bear**")
+        fig_rsc = go.Figure()
+        for key in ["base","bull","bear"]:
+            sm = sc_models[key]["all"]
+            sm_filt = sm[sm["roic_pct"].notna() & ~sm["is_actual"]]
+            if sm_filt.empty: continue
+            fig_rsc.add_scatter(x=sm_filt["period"], y=sm_filt["roic_pct"],
+                                mode="lines+markers", name=SCENARIOS[key]["label"],
+                                line=dict(color=SCENARIOS[key]["color"], width=2))
+        fig_rsc.add_hline(y=0, line_color="#374151")
+        fig_rsc.update_layout(plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                              font=dict(color="#d1d5db"), legend=dict(orientation="h",y=1.1),
+                              yaxis=dict(title="%", gridcolor="#1f2937"),
+                              height=320, margin=dict(t=5,b=30))
+        st.plotly_chart(fig_rsc, use_container_width=True)
+
+    st.divider()
+    st.markdown("**ROIC Walk Table**")
+    roic_tbl = []
+    for _, r in df[~df["is_quarterly"] & df["invested_capital"].notna()].sort_values("year").iterrows():
+        roic_tbl.append({
+            "Period":       r["period"],
+            "EBIT (est.)":  fm(r.get("ebit")),
+            "NOPAT (est.)": fm(r.get("nopat")),
+            "Inv. Capital": fm(r["invested_capital"]),
+            "ROIC":         fp(r["roic_pct"]),
+            "WACC (est.)":  fp(r["wacc_pct"]),
+            "Spread":       fp((r["roic_pct"]-r["wacc_pct"])
+                               if pd.notna(r["roic_pct"]) else None),
+        })
+    st.dataframe(pd.DataFrame(roic_tbl).set_index("Period"), use_container_width=True)
+    st.caption("ROIC = NOPAT / IC. NOPAT = EBIT×(1−tax). IC = Debt + Book Equity − Cash. "
+               "WACC = blended after-tax debt cost × D/V + cost of equity × E/V. All estimates.")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 7 — RELATIVE VALUE
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[6]:
+    rv1, rv2 = st.columns([3, 2])
+    with rv1:
+        st.markdown("**Peer Multiples (May 2026)**")
+        pdf = pd.DataFrame(PEERS)
+        pdf["EV/LTM Rev"]   = pdf["ev_rev"].apply(lambda v: f"{v:.1f}x")
+        pdf["EV/LTM EBITDA"]= pdf["ev_ebitda"].apply(lambda v: f"{v:.1f}x")
+        st.dataframe(pdf[["ticker","name","EV/LTM Rev","EV/LTM EBITDA","rating","note"]]
+                     .rename(columns={"ticker":"Ticker","name":"Company",
+                                      "rating":"Rating","note":"Note"})
+                     .set_index("Ticker"), use_container_width=True)
+
+        fig_p = go.Figure()
+        for p in PEERS:
+            c = RED if p["ticker"]=="CRWV" else BLUE
+            sz= 28  if p["ticker"]=="CRWV" else 16
+            fig_p.add_scatter(x=[p["ev_rev"]], y=[p["ev_ebitda"]],
+                              mode="markers+text", text=[p["ticker"]], textposition="top center",
+                              marker=dict(size=sz, color=c, opacity=0.85), name=p["name"])
+        fig_p.update_layout(
+            xaxis=dict(title="EV / LTM Revenue (x)", gridcolor="#1f2937"),
+            yaxis=dict(title="EV / LTM EBITDA (x)",  gridcolor="#1f2937"),
+            plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+            font=dict(color="#d1d5db"), showlegend=False,
+            height=340, margin=dict(t=10,b=30)
+        )
+        st.plotly_chart(fig_p, use_container_width=True)
+
+    with rv2:
+        pd_ = PRICE_DATA
+        st.markdown("**Price Performance**")
+        perf = {"Period": ["1 Month","MTD","YTD","Since IPO (Mar 2025)"],
+                "Return":  [f"{(pd_['current']/pd_['price_1m_ago']-1)*100:+.1f}%",
+                            f"{(pd_['current']/pd_['price_mtd_start']-1)*100:+.1f}%",
+                            f"{(pd_['current']/pd_['price_ytd_start']-1)*100:+.1f}%",
+                            f"{(pd_['current']/pd_['ipo_price']-1)*100:+.1f}%"],
+                "Level":   [f"${pd_['price_1m_ago']:.2f}→${pd_['current']:.2f}",
+                            f"${pd_['price_mtd_start']:.2f}→${pd_['current']:.2f}",
+                            f"${pd_['price_ytd_start']:.2f}→${pd_['current']:.2f}",
+                            f"${pd_['ipo_price']:.2f}→${pd_['current']:.2f}"]}
+        st.dataframe(pd.DataFrame(perf).set_index("Period"), use_container_width=True)
+
+        st.markdown("**Market Snapshot**")
+        model_rev26 = sum(custom_a["mw"][f"Q{q} 2026E"]*custom_a["rev_per_mw"] for q in [1,2,3,4])
+        snap = {"Metric": ["Mkt Cap","EV","52W Low","52W High","Short Interest",
+                           "EV/FY25 Rev","EV/FY26E Rev (custom)"],
+                "Value":  [f"${pd_['market_cap_b']:.1f}B", f"${pd_['ev_b']:.1f}B",
+                           f"${pd_['week_52_low']:.2f}", f"${pd_['week_52_high']:.2f}",
+                           f"{pd_['short_interest_pct']:.1f}% float",
+                           f"{pd_['ev_b']*1000/5131:.1f}x",
+                           f"{pd_['ev_b']*1000/model_rev26:.1f}x"]}
+        st.dataframe(pd.DataFrame(snap).set_index("Metric"), use_container_width=True)
+
+    st.divider()
+    op1,op2,op3,op4 = st.columns(4)
+    op1.metric("Current Backlog", f"~${OPERATING_DATA['backlog_current_b']:.0f}B")
+    op2.metric("FY2025 Backlog",  f"${OPERATING_DATA['backlog_fy2025_b']:.1f}B")
+    op3.metric("MSFT Rev Share",  f"{OPERATING_DATA['msft_rev_share_2025']*100:.0f}% (FY2025)")
+    op4.metric("Q1 2026 Interest Guided",
+               f"${OPERATING_DATA['q1_2026_interest_low']}–${OPERATING_DATA['q1_2026_interest_high']}M")
+
+    # ── Capital structure detail ──────────────────────────────────────────────
+    st.divider()
+    cs1, cs2 = st.columns(2)
+    with cs1:
+        st.markdown("**Secured Debt (DDTL Stack) — Structurally Senior**")
+        sec_rows = []
+        for d in SECURED_DEBT:
+            sec_rows.append({"Facility": d["name"],
+                             "Drawn ($M)": f"${d['drawn_m']:,}",
+                             "Rate":       d["rate"],
+                             "Maturity":   d["maturity"],
+                             "Note":       d["note"]})
+        sec_df = pd.DataFrame(sec_rows).set_index("Facility")
+        total_secured = sum(d["drawn_m"] for d in SECURED_DEBT)
+        st.dataframe(sec_df, use_container_width=True)
+        st.caption(f"Total secured drawn: ${total_secured:,.0f}M. Revolver undrawn ($2.5B capacity).")
+
+    with cs2:
+        st.markdown("**Unsecured Bonds & Converts — Structurally Subordinated**")
+        bond_rows = []
+        for b in BONDS:
+            coupon_str = f"{b['coupon']:.2f}%" if b["coupon"] else "—"
+            ytw_str = f"{b['ytw']:.2f}%" if b.get("ytw") else "—"
+            bond_rows.append({"Instrument": b["name"],
+                              "Face ($M)": f"${b['face_m']:,}",
+                              "Coupon":    coupon_str,
+                              "Maturity":  b["maturity"],
+                              "Rating":    b["rating"],
+                              "YTW":       ytw_str})
+        bond_df = pd.DataFrame(bond_rows).set_index("Instrument")
+        total_unsecured = sum(b["face_m"] for b in BONDS)
+        st.dataframe(bond_df, use_container_width=True)
+        annual_cash_coupon = sum(b["face_m"] * (b["coupon"] or 0) / 100 for b in BONDS)
+        st.caption(f"Total unsecured face: ${total_unsecured:,}M. "
+                   f"Annual cash coupon burden: ~${annual_cash_coupon:,.0f}M.")
+
+    # ── Recent Events ─────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### Recent Capital Markets Activity")
+    st.caption(
+        f"April 2026: CoreWeave raised ${NEW_DEBT_APRIL_2026_M/1000:.2f}B across three tranches. "
+        f"First appears in Q2 2026 balance sheet (next reporting: {OPERATING_DATA['next_earnings_date_est']}). "
+        f"Pro-forma total debt: ${PF_DEBT_M/1000:.1f}B vs. Q4 2025 actual $21.4B."
+    )
+
+    for ev in RECENT_EVENTS:
+        cat_color = {"Secured DDTL": RED, "HY Bond": ORANGE, "Convertible": BLUE}.get(ev["category"], GRAY)
+        st.markdown(
+            f'<div style="border-left:3px solid {cat_color}; padding:10px 16px; '
+            f'background:#1f2937; border-radius:4px; margin:8px 0;">'
+            f'<span style="font-size:11px;color:#9ca3af;text-transform:uppercase;">'
+            f'{ev["date"]} — {ev["category"]}</span><br>'
+            f'<b style="font-size:15px;">{ev["instrument"]}</b>'
+            f' &nbsp;<span style="color:#9ca3af;font-size:13px;">'
+            f'${ev["amount_m"]:,}M | {ev["coupon"]} | OID: {ev["pricing"]} | Due {ev["maturity"]}'
+            f' | {ev["rating"]}</span><br>'
+            f'<span style="font-size:13px;color:#d1d5db;">{ev["commentary"]}</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    total_apr = sum(e["amount_m"] for e in RECENT_EVENTS)
+    ann_interest = sum(e["amount_m"] * (float(e["coupon"].replace("%","").replace("SOFR + ","").split(" ")[0])
+                                        + (4.25 if "SOFR" in e["coupon"] else 0)) / 100
+                       for e in RECENT_EVENTS)
+    st.markdown(
+        f'<div style="background:#111827;border:1px solid #374151;border-radius:6px;'
+        f'padding:12px 16px;margin-top:12px;">'
+        f'<b>Combined impact:</b> ${total_apr/1000:.2f}B new debt | '
+        f'~${ann_interest/1000:.2f}B incremental annual interest | '
+        f'PF total debt: ${PF_DEBT_M/1000:.1f}B | '
+        f'PF LTV: {PF_LTV_PCT:.1f}% (vs. EV ${PRICE_DATA["ev_b"]:.0f}B) | '
+        f'PF gross leverage: {PF_DEBT_M / (latest_q.get("adj_ebitda_ttm",1) or 1):.1f}x LTM EBITDA'
+        f'</div>',
+        unsafe_allow_html=True
+    )
