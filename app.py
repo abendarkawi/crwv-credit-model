@@ -58,7 +58,7 @@ SCENARIO_SLIDER_VALS = {
         capex_per_mw=8.0, maint_pct=3,
         td_26=47, td_27=60, td_28=70, td_29=67,
         int_rate=8.25, sbc_pct=14, da_pct=47,
-        tax_rate=5, eq_book=5000, coe=18, wc_days=15,
+        tax_rate=5, eq_book=5000, coe=12, wc_days=15,
     ),
     "bull": dict(
         mw_q1=1000, mw_q2=1400, mw_q3=1900, mw_q4=2500,
@@ -68,7 +68,7 @@ SCENARIO_SLIDER_VALS = {
         capex_per_mw=8.0, maint_pct=3,
         td_26=44, td_27=57, td_28=63, td_29=52,
         int_rate=7.5, sbc_pct=13, da_pct=47,
-        tax_rate=5, eq_book=5000, coe=18, wc_days=15,
+        tax_rate=5, eq_book=5000, coe=12, wc_days=15,
     ),
     "bear": dict(
         mw_q1=750,  mw_q2=850,  mw_q3=1000, mw_q4=1150,
@@ -78,7 +78,7 @@ SCENARIO_SLIDER_VALS = {
         capex_per_mw=8.0, maint_pct=3,
         td_26=51, td_27=68, td_28=82, td_29=90,
         int_rate=9.5, sbc_pct=16, da_pct=47,
-        tax_rate=5, eq_book=5000, coe=18, wc_days=15,
+        tax_rate=5, eq_book=5000, coe=12, wc_days=15,
     ),
 }
 

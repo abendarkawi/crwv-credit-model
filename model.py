@@ -89,7 +89,7 @@ def get_defaults() -> dict:
         "tax_rate":         5.0,
         "wc_days":          15,
         "equity_book":      5000.0,
-        "cost_of_equity":   18.0,
+        "cost_of_equity":   12.0,
     }
 
 
