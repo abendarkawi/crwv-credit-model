@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 from model import build_model, get_defaults, get_scenario_assumptions, SCENARIOS
 from data import (PEERS, BONDS, SECURED_DEBT, PRICE_DATA, OPERATING_DATA,
                   RECENT_EVENTS, PF_DEBT_M, PF_LTV_PCT, NEW_DEBT_APRIL_2026_M)
+import bloomberg as bbg
 
 st.set_page_config(page_title="CoreWeave Credit Model | CRWV", layout="wide",
                    initial_sidebar_state="expanded")
@@ -87,10 +88,36 @@ for _k, _v in SCENARIO_SLIDER_VALS["base"].items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
+# ── Bloomberg session state ───────────────────────────────────────────────────
+if "bbg_data" not in st.session_state:
+    st.session_state["bbg_data"] = {"available": False, "price": None,
+                                     "peers": None, "bond_ytw": None,
+                                     "rf_rate": None, "as_of": None}
+
+def _apply_bbg(raw: dict):
+    """Merge live Bloomberg data over static data.py values."""
+    st.session_state["bbg_data"] = raw
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## ⚡ CoreWeave Credit Model")
     st.caption("CRWV | May 2026 | SEC filings + press releases")
+
+    # Bloomberg refresh
+    bbg_state = st.session_state["bbg_data"]
+    if bbg_state["available"]:
+        st.success(f"Bloomberg live  ·  {bbg_state['as_of']}", icon="🟢")
+    else:
+        st.caption("Bloomberg: not connected  ·  showing static data")
+    if st.button("🔄 Refresh Bloomberg data", use_container_width=True):
+        with st.spinner("Fetching from Bloomberg Terminal…"):
+            raw = bbg.fetch_all()
+        if raw["available"]:
+            _apply_bbg(raw)
+            st.success("Live data loaded.", icon="✅")
+            st.rerun()
+        else:
+            st.warning("Bloomberg unavailable. Check that Terminal is running and blpapi is installed.")
     st.divider()
 
     # Scenario loader
@@ -206,17 +233,43 @@ qdf         = custom_m["quarterly"]
 adf         = custom_m["annual"]
 latest_q    = qdf[qdf["is_actual"]].iloc[-1]
 
+# ── Resolve live vs. static data ─────────────────────────────────────────────
+_bbg = st.session_state["bbg_data"]
+# Price data: overlay live fields where available
+_pd = dict(PRICE_DATA)
+if _bbg["price"]:
+    for _k in ("current", "market_cap_b", "ev_b", "week_52_high", "week_52_low", "short_interest_pct"):
+        if _bbg["price"].get(_k) is not None:
+            _pd[_k] = _bbg["price"][_k]
+live_price = _pd
+
+# Peers: use live if available, else static
+live_peers = _bbg["peers"] if _bbg["peers"] else PEERS
+
+# Bonds: overlay live YTW where available
+_bond_ytw = _bbg["bond_ytw"] or {}
+live_bonds = []
+for b in live_bonds:
+    bd = dict(b)
+    if bd["name"] in _bond_ytw:
+        bd["ytw"] = _bond_ytw[bd["name"]]
+    live_bonds.append(bd)
+
+# Risk-free rate: expose for display (doesn't auto-adjust CoE slider)
+live_rf = _bbg["rf_rate"]
+bbg_as_of = _bbg["as_of"]
+
 # ── Header ────────────────────────────────────────────────────────────────────
 h1, h2, h3 = st.columns([3, 1, 1])
 with h1:
     st.markdown("## CoreWeave, Inc. (CRWV)")
     st.caption("GPU Cloud Infrastructure | HY Credit | B+/Ba3 Issuer | 9.00–9.75% Sr Notes")
 with h2:
-    st.metric("Stock Price", f"${PRICE_DATA['current']:.2f}",
-              f"YTD: +{(PRICE_DATA['current']/PRICE_DATA['price_ytd_start']-1)*100:.1f}%")
+    st.metric("Stock Price", f"${live_price['current']:.2f}",
+              f"YTD: +{(live_price['current']/live_price['price_ytd_start']-1)*100:.1f}%")
 with h3:
-    st.metric("Enterprise Value", f"${PRICE_DATA['ev_b']:.1f}B",
-              f"Mkt Cap: ${PRICE_DATA['market_cap_b']:.1f}B")
+    st.metric("Enterprise Value", f"${live_price['ev_b']:.1f}B",
+              f"Mkt Cap: ${live_price['market_cap_b']:.1f}B")
 
 st.divider()
 
@@ -258,7 +311,7 @@ with tabs[0]:
     with p2:
         st.metric("PF LTV (Debt / EV)",
                   f"{PF_LTV_PCT:.1f}%",
-                  f"PF Debt ${PF_DEBT_M/1000:.1f}B / EV ${PRICE_DATA['ev_b']:.0f}B",
+                  f"PF Debt ${PF_DEBT_M/1000:.1f}B / EV ${live_price['ev_b']:.0f}B",
                   delta_color="inverse")
     with p3:
         gross_lev_q = latest_q.get("gross_lev")
@@ -688,7 +741,7 @@ transitory; it is structural to the business model through at least 2028.
     b1, b2 = st.columns(2)
     with b1:
         st.markdown("*Unsecured Bonds — structurally subordinated*")
-        bdf = pd.DataFrame(BONDS)
+        bdf = pd.DataFrame(live_bonds)
         bdf["face_m"] = bdf["face_m"].apply(lambda v: f"${v:,}M")
         bdf["ytw"]    = bdf["ytw"].apply(lambda v: f"{v:.2f}%" if v else "N/A")
         bdf.columns   = ["Name","Coupon","Maturity","Face","Rating","YTW"]
@@ -869,7 +922,7 @@ with tabs[6]:
     rv1, rv2 = st.columns([3, 2])
     with rv1:
         st.markdown("**Peer Multiples (May 2026)**")
-        pdf = pd.DataFrame(PEERS)
+        pdf = pd.DataFrame(live_peers)
         pdf["EV/LTM Rev"]   = pdf["ev_rev"].apply(lambda v: f"{v:.1f}x")
         pdf["EV/LTM EBITDA"]= pdf["ev_ebitda"].apply(lambda v: f"{v:.1f}x")
         st.dataframe(pdf[["ticker","name","EV/LTM Rev","EV/LTM EBITDA","rating","note"]]
@@ -878,7 +931,7 @@ with tabs[6]:
                      .set_index("Ticker"), use_container_width=True)
 
         fig_p = go.Figure()
-        for p in PEERS:
+        for p in live_peers:
             c = RED if p["ticker"]=="CRWV" else BLUE
             sz= 28  if p["ticker"]=="CRWV" else 16
             fig_p.add_scatter(x=[p["ev_rev"]], y=[p["ev_ebitda"]],
@@ -894,7 +947,7 @@ with tabs[6]:
         st.plotly_chart(fig_p, use_container_width=True)
 
     with rv2:
-        pd_ = PRICE_DATA
+        pd_ = live_price
         st.markdown("**Price Performance**")
         perf = {"Period": ["1 Month","MTD","YTD","Since IPO (Mar 2025)"],
                 "Return":  [f"{(pd_['current']/pd_['price_1m_ago']-1)*100:+.1f}%",
@@ -946,7 +999,7 @@ with tabs[6]:
     with cs2:
         st.markdown("**Unsecured Bonds & Converts — Structurally Subordinated**")
         bond_rows = []
-        for b in BONDS:
+        for b in live_bonds:
             coupon_str = f"{b['coupon']:.2f}%" if b["coupon"] else "—"
             ytw_str = f"{b['ytw']:.2f}%" if b.get("ytw") else "—"
             bond_rows.append({"Instrument": b["name"],
@@ -956,9 +1009,9 @@ with tabs[6]:
                               "Rating":    b["rating"],
                               "YTW":       ytw_str})
         bond_df = pd.DataFrame(bond_rows).set_index("Instrument")
-        total_unsecured = sum(b["face_m"] for b in BONDS)
+        total_unsecured = sum(b["face_m"] for b in live_bonds)
         st.dataframe(bond_df, use_container_width=True)
-        annual_cash_coupon = sum(b["face_m"] * (b["coupon"] or 0) / 100 for b in BONDS)
+        annual_cash_coupon = sum(b["face_m"] * (b["coupon"] or 0) / 100 for b in live_bonds)
         st.caption(f"Total unsecured face: ${total_unsecured:,}M. "
                    f"Annual cash coupon burden: ~${annual_cash_coupon:,.0f}M.")
 
@@ -997,7 +1050,7 @@ with tabs[6]:
         f'<b>Combined impact:</b> ${total_apr/1000:.2f}B new debt | '
         f'~${ann_interest/1000:.2f}B incremental annual interest | '
         f'PF total debt: ${PF_DEBT_M/1000:.1f}B | '
-        f'PF LTV: {PF_LTV_PCT:.1f}% (vs. EV ${PRICE_DATA["ev_b"]:.0f}B) | '
+        f'PF LTV: {PF_LTV_PCT:.1f}% (vs. EV ${live_price["ev_b"]:.0f}B) | '
         f'PF gross leverage: {PF_DEBT_M / (latest_q.get("adj_ebitda_ttm",1) or 1):.1f}x LTM EBITDA'
         f'</div>',
         unsafe_allow_html=True
@@ -1014,7 +1067,7 @@ and assumed to recover at or near par. Unsecured bonds receive the residual.""")
 
     # ── Capital structure constants ───────────────────────────────────────────
     TOTAL_SECURED = sum(d["drawn_m"] for d in SECURED_DEBT if d["drawn_m"] > 0)
-    TOTAL_UNSECURED = sum(b["face_m"] for b in BONDS)
+    TOTAL_UNSECURED = sum(b["face_m"] for b in live_bonds)
     LEASE_AT_DISTRESS = 8449.0   # FY2025 actual; grows in forward years
 
     # ── Recovery assumptions sidebar ─────────────────────────────────────────
@@ -1108,7 +1161,7 @@ and assumed to recover at or near par. Unsecured bonds receive the residual.""")
     m1.metric("Going Concern EV",   fm(gc["ev"]),   f"{fcf_multiple}x × ${unlevered_fcf:,.0f}M uFCF")
     m2.metric("Liquidation EV",     fm(liq["ev"]),  f"{100-gpu_haircut}¢ on gross PP&E")
     m3.metric("Secured Debt (senior)", fm(TOTAL_SECURED), "DDTL 1-5 at par")
-    m4.metric("Unsecured Face",     fm(TOTAL_UNSECURED), f"{len(BONDS)} instruments")
+    m4.metric("Unsecured Face",     fm(TOTAL_UNSECURED), f"{len(live_bonds)} instruments")
     m5.metric("GC Recovery",        f"{gc['rec_pct']:.0f}¢ / $1",
               f"{gc['cash_cod']*100:.0f}¢ cash + {gc['paper_cod']*100:.0f}¢ paper",
               delta_color="off")
