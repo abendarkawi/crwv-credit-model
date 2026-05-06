@@ -312,11 +312,15 @@ def build_model(a: dict) -> dict:
     df["invested_capital"] = (df["ppe_gross"].fillna(0) + df["nwc"].fillna(0)).clip(lower=500)
     df["nopat"] = df["ebit"].fillna(df["adj_ebitda"] * 0.2) * (1 - a["tax_rate"] / 100)
     df["roic_pct"] = df["nopat"] / df["invested_capital"] * 100
-    book_eq   = df["book_equity"].fillna(a["equity_book"])
-    total_cap = (df["total_debt"] + book_eq).clip(lower=1)
+    # WACC: use market-value D/V weight anchored to current debt vs. (debt + mkt cap).
+    # Book equity drifts upward as NI+SBC accumulate, artificially lifting CoE weight
+    # and pushing WACC toward CoE — not how the market prices this capital structure.
+    mkt_cap_m = 70_300.0   # current market cap ($M) — held constant as a structural anchor
     at_debt   = a["interest_rate"] / 100 * (1 - a["tax_rate"] / 100)
-    df["wacc_pct"] = (df["total_debt"] / total_cap * at_debt * 100
-                      + book_eq / total_cap * a["cost_of_equity"])
+    df["_mv_total"] = (df["total_debt"] + mkt_cap_m).clip(lower=1)
+    df["wacc_pct"]  = (df["total_debt"] / df["_mv_total"] * at_debt * 100
+                       + mkt_cap_m / df["_mv_total"] * a["cost_of_equity"])
+    df.drop(columns=["_mv_total"], inplace=True)
 
     # TTM metrics on quarterly series
     qdf = df[df["is_quarterly"]].copy().reset_index(drop=True)

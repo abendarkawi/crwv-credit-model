@@ -781,7 +781,7 @@ and the business only earns its cost of capital during periods of supply-constra
         st.plotly_chart(fig_rsc, use_container_width=True)
 
     st.divider()
-    st.markdown("**ROIC Walk Table**")
+    st.markdown("**ROIC Walk Table — Custom scenario (sidebar inputs)**")
     roic_tbl = []
     for _, r in df[~df["is_quarterly"] & df["invested_capital"].notna()].sort_values("year").iterrows():
         roic_tbl.append({
@@ -795,9 +795,10 @@ and the business only earns its cost of capital during periods of supply-constra
                                if pd.notna(r["roic_pct"]) else None),
         })
     st.dataframe(pd.DataFrame(roic_tbl).set_index("Period"), use_container_width=True)
-    st.caption("ROIC = NOPAT / Gross PP&E + NWC. NOPAT = EBIT×(1−tax). Gross PP&E = cumulative capex "
-               "deployed (stable denominator vs. net PP&E which collapses as D&A >> capex in later years). "
-               "WACC = blended after-tax debt cost × D/V + cost of equity × E/V. All estimates.")
+    st.caption("ROIC = NOPAT / (Gross PP&E + NWC). NOPAT = EBIT × (1−tax). Gross PP&E = cumulative capex deployed "
+               "(net PP&E collapses as D&A >> new capex in later years — gross avoids denominator blow-up). "
+               "WACC uses market-value weights anchored to current market cap ($70.3B) + total debt; "
+               "WACC declines as cheaper debt displaces equity in the capital structure. All estimates.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 7 — RELATIVE VALUE
