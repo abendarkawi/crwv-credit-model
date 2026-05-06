@@ -395,37 +395,35 @@ with tabs[0]:
     # Credit assessment
     st.divider()
     st.markdown("**Credit Assessment**")
+
+    def _ca_card(sc_key, label, border_color):
+        r2029 = sc_models[sc_key]["all"]
+        r2029 = r2029[r2029["period"] == "FY 2029E"]
+        rev   = f"~${sc_ann(sc_key,'revenue')[-1]/1000:.0f}B"
+        nlev  = fx(r2029["net_lev"].values[0]) if not r2029.empty else "—"
+        fcf_v = signed(sc_ann(sc_key,'fcf')[-1])
+        rat   = SCENARIOS[sc_key]["rationale"]
+        st.markdown(
+            f'<div style="border-left:4px solid {border_color};background:#1f2937;'
+            f'border-radius:6px;padding:16px 18px;height:100%;">'
+            f'<div style="font-size:14px;font-weight:700;color:#f9fafb;margin-bottom:10px;">'
+            f'{label}</div>'
+            f'<div style="font-size:13px;color:#d1d5db;line-height:1.7;margin-bottom:12px;">'
+            f'{rat}</div>'
+            f'<div style="font-size:12px;color:#9ca3af;border-top:1px solid #374151;'
+            f'padding-top:10px;line-height:2.0;">'
+            f'<b style="color:#f9fafb;">FY2029E</b><br>'
+            f'Revenue: {rev}&nbsp;&nbsp;|&nbsp;&nbsp;'
+            f'Net Lev: {nlev}&nbsp;&nbsp;|&nbsp;&nbsp;'
+            f'FCF: {fcf_v}'
+            f'</div></div>',
+            unsafe_allow_html=True
+        )
+
     ca1, ca2, ca3 = st.columns(3)
-    with ca1:
-        st.markdown(f"""
-**🐂 Bull Case**
-*{SCENARIOS['bull']['rationale']}*
-
-Key metrics by FY2029E:
-- Revenue: ~${sc_ann('bull','revenue')[-1]/1000:.0f}B
-- Net Leverage: ~{fx(sc_models['bull']['all'][sc_models['bull']['all']['period']=='FY 2029E']['net_lev'].values[0] if 'FY 2029E' in sc_models['bull']['all']['period'].values else None)}
-- FCF: {signed(sc_ann('bull','fcf')[-1])}
-        """)
-    with ca2:
-        st.markdown(f"""
-**📊 Base Case** *(credit investor anchor)*
-*{SCENARIOS['base']['rationale']}*
-
-Key metrics by FY2029E:
-- Revenue: ~${sc_ann('base','revenue')[-1]/1000:.0f}B
-- Net Leverage: ~{fx(sc_models['base']['all'][sc_models['base']['all']['period']=='FY 2029E']['net_lev'].values[0] if 'FY 2029E' in sc_models['base']['all']['period'].values else None)}
-- FCF: {signed(sc_ann('base','fcf')[-1])}
-        """)
-    with ca3:
-        st.markdown(f"""
-**🐻 Bear Case**
-*{SCENARIOS['bear']['rationale']}*
-
-Key metrics by FY2029E:
-- Revenue: ~${sc_ann('bear','revenue')[-1]/1000:.0f}B
-- Net Leverage: ~{fx(sc_models['bear']['all'][sc_models['bear']['all']['period']=='FY 2029E']['net_lev'].values[0] if 'FY 2029E' in sc_models['bear']['all']['period'].values else None)}
-- FCF: {signed(sc_ann('bear','fcf')[-1])}
-        """)
+    with ca1: _ca_card("bull", "🐂 Bull — executes on guidance", GREEN)
+    with ca2: _ca_card("base", "📊 Base — credit conservative anchor", BLUE)
+    with ca3: _ca_card("bear", "🐻 Bear — severe stress / impairment", RED)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — INCOME STATEMENT
