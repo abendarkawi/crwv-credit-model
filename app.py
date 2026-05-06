@@ -48,77 +48,141 @@ BLUE=  "#3b82f6"; ORANGE="#f97316"; GREEN="#10b981"
 RED=   "#ef4444"; YELLOW="#f59e0b"; GRAY="#6b7280"
 PURPLE="#8b5cf6"
 
+# ── Scenario slider values (used both for loading into sidebar and for fixed charts) ──
+SCENARIO_SLIDER_VALS = {
+    "base": dict(
+        mw_q1=850,  mw_q2=1050, mw_q3=1300, mw_q4=1600,
+        mw_27=2100, mw_28=2700, mw_29=3200,
+        rev_per_mw=1.75, gross_margin=69,
+        em_26=47, em_27=49, em_28=51, em_29=53,
+        capex_per_mw=8.0, maint_pct=3,
+        td_26=47, td_27=60, td_28=70, td_29=67,
+        int_rate=8.25, sbc_pct=14, da_pct=47,
+        tax_rate=5, eq_book=5000, coe=18, wc_days=15,
+    ),
+    "bull": dict(
+        mw_q1=1000, mw_q2=1400, mw_q3=1900, mw_q4=2500,
+        mw_27=3400, mw_28=4700, mw_29=6000,
+        rev_per_mw=1.88, gross_margin=72,
+        em_26=53, em_27=57, em_28=60, em_29=63,
+        capex_per_mw=8.0, maint_pct=3,
+        td_26=44, td_27=57, td_28=63, td_29=52,
+        int_rate=7.5, sbc_pct=13, da_pct=47,
+        tax_rate=5, eq_book=5000, coe=18, wc_days=15,
+    ),
+    "bear": dict(
+        mw_q1=750,  mw_q2=850,  mw_q3=1000, mw_q4=1150,
+        mw_27=1500, mw_28=1900, mw_29=2200,
+        rev_per_mw=1.55, gross_margin=66,
+        em_26=42, em_27=43, em_28=44, em_29=45,
+        capex_per_mw=8.0, maint_pct=3,
+        td_26=51, td_27=68, td_28=82, td_29=90,
+        int_rate=9.5, sbc_pct=16, da_pct=47,
+        tax_rate=5, eq_book=5000, coe=18, wc_days=15,
+    ),
+}
+
+# Initialise session state from base defaults on first load
+for _k, _v in SCENARIO_SLIDER_VALS["base"].items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## ⚡ CoreWeave Credit Model")
     st.caption("CRWV | May 2026 | SEC filings + press releases")
     st.divider()
 
+    # Scenario loader
+    sc_load = st.selectbox(
+        "Load scenario as starting point",
+        ["base", "bull", "bear", "custom"],
+        format_func=lambda k: {
+            "base":   "Base — conservative credit anchor",
+            "bull":   "Bull — executes on guidance",
+            "bear":   "Bear — severe stress",
+            "custom": "Custom — manual inputs below",
+        }[k],
+        key="sc_load",
+    )
+    if sc_load != "custom" and sc_load in SCENARIO_SLIDER_VALS:
+        _prev = st.session_state.get("_last_sc_load")
+        if _prev != sc_load:
+            for _k, _v in SCENARIO_SLIDER_VALS[sc_load].items():
+                st.session_state[_k] = _v
+            st.session_state["_last_sc_load"] = sc_load
+            st.rerun()
+    st.caption("Adjust any slider below to customise from the loaded scenario.")
+    st.divider()
+
     with st.expander("MW Online — Core Driver", expanded=True):
         st.markdown('<div class="section-hdr">Quarterly 2026</div>', unsafe_allow_html=True)
-        mw_q1 = st.slider("Q1 2026E", 500, 2500, 1050, 50,
-            help="Rec (Base): 950 MW. Implied by Q1 guidance $1.9–2.0B at $1.82M/MW. FY2025 exited 850 MW.")
-        mw_q2 = st.slider("Q2 2026E", 500, 3000, 1500, 50,
-            help="Rec (Base): 1,300 MW. Significant ramp as contracted 3.1 GW comes online.")
-        mw_q3 = st.slider("Q3 2026E", 500, 4000, 2000, 100,
-            help="Rec (Base): 1,750 MW. Blackwell deployments accelerate; OpenAI/Meta contracts ramp.")
-        mw_q4 = st.slider("Q4 2026E", 500, 5000, 2500, 100,
-            help="Rec (Base): 2,200 MW. H2 ramp consistent with $11–13B full-year revenue range.")
+        mw_q1 = st.slider("Q1 2026E", 500, 2500, step=50, key="mw_q1",
+            help="Base: 850 MW. Mgmt guided $1.9–2.0B Q1 rev; at $1.75M/MW ≈ 1,090–1,140 MW. "
+                 "Credit base uses lower ramp — execution delays common in GPU buildouts.")
+        mw_q2 = st.slider("Q2 2026E", 500, 3000, step=50, key="mw_q2",
+            help="Base: 1,050 MW. Apr '26 raises confirm continued buildout but ramp timing uncertain.")
+        mw_q3 = st.slider("Q3 2026E", 500, 4000, step=100, key="mw_q3",
+            help="Base: 1,300 MW. H2 2026 ramp. Bull: 1,900 MW if Blackwell on schedule.")
+        mw_q4 = st.slider("Q4 2026E", 500, 5000, step=100, key="mw_q4",
+            help="Base: 1,600 MW → ~$8.4B FY2026E revenue. Bull: 2,500 MW → ~$12.5B (in-line with guidance).")
         st.markdown('<div class="section-hdr">Annual 2027–2029 (avg. active MW)</div>', unsafe_allow_html=True)
-        mw_27 = st.slider("FY 2027E", 1000, 7000, 3200, 100,
-            help="Rec (Base): 2,900 MW. Mid-point of 3.1 GW contracted; includes incremental DDTL-funded builds.")
-        mw_28 = st.slider("FY 2028E", 1000, 9000, 4200, 100,
-            help="Rec (Base): 3,600 MW. Continued build-out; mgmt flagged 5,000+ MW additional by 2030.")
-        mw_29 = st.slider("FY 2029E", 1000, 12000, 5000, 100,
-            help="Rec (Base): 4,200 MW. Approaching the 5,000 MW additional target for 2030.")
+        mw_27 = st.slider("FY 2027E", 500, 7000, step=100, key="mw_27",
+            help="Base: 2,100 MW. Contracted capacity is 3.1 GW but assumes partial utilisation / delays.")
+        mw_28 = st.slider("FY 2028E", 500, 9000, step=100, key="mw_28",
+            help="Base: 2,700 MW. GPU obsolescence risk as Rubin / next-gen arrives.")
+        mw_29 = st.slider("FY 2029E", 500, 12000, step=100, key="mw_29",
+            help="Base: 3,200 MW. Credit base stays well below mgmt's 5,000+ MW target.")
 
     with st.expander("Unit Economics"):
-        rev_per_mw   = st.number_input("Revenue / MW / Qtr ($M)", 0.5, 5.0, 1.85, 0.05,
-            help="Base: $1.82M. FY2025 implied: $1.85M. Blackwell may lift 5–10% (bull). Bear: pricing normalises to ~$1.70M.")
-        gross_margin = st.slider("Gross Margin (%)", 50, 85, 72,
-            help="FY2025: 71.7%. May compress on lower-margin Blackwell or power cost inflation.")
+        rev_per_mw   = st.number_input("Revenue / MW / Qtr ($M)", 0.5, 5.0, step=0.05, key="rev_per_mw",
+            help="Base: $1.75M. FY2025 actual: $1.85M. Bear: $1.55M as GPU supply normalises. "
+                 "Bull: $1.88M modest Blackwell premium.")
+        gross_margin = st.slider("Gross Margin (%)", 50, 85, step=1, key="gross_margin",
+            help="FY2025: 71.7%. Base: 69% — power cost inflation, lower-margin contracts.")
         st.markdown("**Adj. EBITDA Margin** — *see quality note in Credit Metrics tab*")
-        em_26 = st.slider("2026E", 40, 70, 55,
-            help="Base: 53%. Bottoms Q1 2026 per mgmt. Full-year compresses on opex build and interest headwinds.")
-        em_27 = st.slider("2027E", 40, 75, 57, help="Base: 55%. Gradual margin expansion as scale drives opex leverage.")
-        em_28 = st.slider("2028E", 45, 80, 59, help="Base: 57%.")
-        em_29 = st.slider("2029E", 45, 80, 61, help="Base: 59%. LT mgmt target 25–30% GAAP ≈ 55–65% EBITDA.")
+        em_26 = st.slider("2026E", 35, 70, step=1, key="em_26",
+            help="Base: 47%. Mgmt said margins bottom Q1; credit base stays conservative full-year.")
+        em_27 = st.slider("2027E", 35, 75, step=1, key="em_27",
+            help="Base: 49%. Slow expansion as fixed costs are spread over more revenue.")
+        em_28 = st.slider("2028E", 35, 80, step=1, key="em_28",
+            help="Base: 51%.")
+        em_29 = st.slider("2029E", 35, 80, step=1, key="em_29",
+            help="Base: 53%. Credit base LT margin well below mgmt target of 65%+.")
 
     with st.expander("Capex"):
-        capex_per_mw = st.number_input("Build Cost / New MW ($M)", 2.0, 20.0, 8.0, 0.5,
-            help="All-in cost per MW. H100/H200 cluster ~$8–12M/MW. Blackwell may be higher initially.")
-        maint_pct    = st.slider("Maintenance Capex (% Revenue)", 0, 10, 3,
-            help="Ongoing maintenance. Note: GPU useful life ~3–5 yrs; true economic maintenance capex is higher.")
+        capex_per_mw = st.number_input("Build Cost / New MW ($M)", 2.0, 20.0, step=0.5, key="capex_per_mw",
+            help="All-in cost per MW. H100/H200 ~$8–12M/MW. Blackwell may be higher initially.")
+        maint_pct    = st.slider("Maintenance Capex (% Revenue)", 0, 10, step=1, key="maint_pct",
+            help="Ongoing maintenance. GPU useful life ~3–5 yrs; true economic maintenance capex is higher.")
 
     with st.expander("Debt & Interest"):
-        td_26 = st.slider("Total Debt FY2026E ($B)", 20, 100, 47, 1,
-            help="Base: $47B. Q4 2025: $21.4B + Apr '26 confirmed raises ($9.85B) + continued draws to fund capex. "
-                 "Apr '26 raise: DDTL 5.0 $3.1B (SOFR+450, 99 OID) + HY $2.75B + converts $4B.") * 1000.0
-        td_27 = st.slider("Total Debt FY2027E ($B)", 30, 130, 62, 2,
-            help="Base: $64B. DDTL 1.0 matures Mar 2028 — must refinance ~$2.3B. Continued capex draws.") * 1000.0
-        td_28 = st.slider("Total Debt FY2028E ($B)", 30, 150, 75, 2,
-            help="Base: $75B. Peak leverage year in base case. FCF improves but still deeply negative.") * 1000.0
-        td_29 = st.slider("Total Debt FY2029E ($B)", 20, 150, 68, 2,
-            help="Base: $72B. Bull: deleveraging begins. Bear: $94B+ with no FCF inflection.") * 1000.0
-        int_rate = st.slider("Blended Interest Rate (%)", 5.0, 15.0, 8.25, 0.25,
-            help="Base: 8.2%. Apr '26 1.75% converts ($4B) drag blended rate lower; offset by SOFR+450 DDTL. "
-                 "FY2025 implied ~8.5%. Blended on $31B+ PF stack.")
+        td_26 = st.slider("Total Debt FY2026E ($B)", 20, 100, step=1, key="td_26",
+            help="Base: $47B. Q4 2025: $21.4B + Apr '26 raises ($9.85B) + continued capex draws. "
+                 "Bear: $51B as draws continue despite revenue miss.") * 1000.0
+        td_27 = st.slider("Total Debt FY2027E ($B)", 30, 130, step=2, key="td_27",
+            help="Base: $60B. DDTL 1.0 matures Mar 2028 — must refinance ~$2.3B.") * 1000.0
+        td_28 = st.slider("Total Debt FY2028E ($B)", 30, 150, step=2, key="td_28",
+            help="Base: $70B. Peak leverage year in base case.") * 1000.0
+        td_29 = st.slider("Total Debt FY2029E ($B)", 20, 150, step=2, key="td_29",
+            help="Base: $67B. Bull: ~$52B as FCF turns positive and deleveraging begins.") * 1000.0
+        int_rate = st.slider("Blended Interest Rate (%)", 5.0, 15.0, step=0.25, key="int_rate",
+            help="Base: 8.25%. Apr '26 converts (1.75%) drag blended rate lower vs. DDTLs. "
+                 "Bear: 9.5% as capital markets tighten.")
 
     with st.expander("EBITDA Quality & Other"):
-        sbc_pct = st.slider("SBC (% Revenue)", 5, 25, 14,
-            help="FY2025 implied: ~13.4% (Adj. EBITDA $3.09B − GAAP EBITDA $2.41B = $685M). "
-                 "Real economic cost. Credit metrics on CASH EBITDA basis shown in Credit tab.")
-        da_pct   = st.slider("D&A (% Revenue)", 20, 80, 47,
-            help="FY2025 implied: ~47%. D&A is a real wearing-out of GPU assets (3–5yr life). "
-                 "High D&A + high SBC = large gap between Adj. EBITDA and economic earnings.")
-        tax_rate = st.slider("Cash Tax Rate (%)", 0, 35, 5,
-            help="Large NOL carryforward. Minimal cash taxes near-term. Full statutory ~2028E+.")
-        eq_book  = st.number_input("Book Equity ($M)", 1000, 20000, 5000, 500,
-            help="Estimated post-IPO book equity less accumulated deficit. Used for ROIC/WACC.")
-        coe      = st.slider("Cost of Equity (%)", 10, 30, 18,
-            help="High-beta AI infra; beta ~2.5+. 18–22% under CAPM. Core to ROIC vs. WACC debate.")
-        wc_days  = st.slider("WC Days", 5, 30, 15,
-            help="Net WC as days of revenue growth. Builds as revenue scales.")
+        sbc_pct = st.slider("SBC (% Revenue)", 5, 25, step=1, key="sbc_pct",
+            help="FY2025 implied: ~13.4% ($685M). Real economic cost excluded from Adj. EBITDA.")
+        da_pct   = st.slider("D&A (% Revenue)", 20, 80, step=1, key="da_pct",
+            help="FY2025 implied: ~47%. D&A is real GPU asset wearing-out (3–5yr life).")
+        tax_rate = st.slider("Cash Tax Rate (%)", 0, 35, step=1, key="tax_rate",
+            help="Large NOL carryforward. Minimal cash taxes near-term.")
+        eq_book  = st.number_input("Book Equity ($M)", 1000, 20000, step=500, key="eq_book",
+            help="Estimated post-IPO book equity. Used for balance sheet.")
+        coe      = st.slider("Cost of Equity (%)", 10, 30, step=1, key="coe",
+            help="High-beta AI infra; beta ~2.5+. 18–22% under CAPM.")
+        wc_days  = st.slider("WC Days", 5, 30, step=1, key="wc_days",
+            help="Net WC as days of revenue growth.")
 
 # ── Build custom model + scenario models ─────────────────────────────────────
 custom_a = {

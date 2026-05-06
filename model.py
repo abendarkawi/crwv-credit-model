@@ -8,53 +8,54 @@ SCENARIOS = {
     "base": dict(
         label="Base", color="#3b82f6",
         rationale=(
-            "Conservative. ~85% of mgmt MW guidance; modest pricing normalisation; cost of capital "
-            "stays elevated. Includes Apr '26 confirmed raises ($9.85B: DDTL 5.0 + HY + converts). "
-            "Debt peaks ~$75B FY2028 before modest paydown. ICR stays above 2x but with no cushion. "
-            "Credit investor anchor case."
+            "Credit conservative — ~30% below FY2026 guidance midpoint ($12.5B). "
+            "Execution delays slow MW ramp; pricing normalises as GPU supply loosens. "
+            "Margins compressed by opex build and power costs. Debt peaks ~$70B FY2028. "
+            "ICR 2–3x through forecast — no covenant headroom. "
+            "Bonds money-good but zero margin of safety. Credit investor anchor."
         ),
-        mw={"Q1 2026E": 950, "Q2 2026E": 1300, "Q3 2026E": 1750, "Q4 2026E": 2200,
-            "FY 2027E": 2900, "FY 2028E": 3600, "FY 2029E": 4200},
-        rev_per_mw=1.82, gross_margin=71.0,
-        ebitda_margin_2026=53.0, ebitda_margin_2027=55.0,
-        ebitda_margin_2028=57.0, ebitda_margin_2029=59.0,
-        total_debt_2026=46850, total_debt_2027=63850,
-        total_debt_2028=74850, total_debt_2029=71850,
-        interest_rate=8.2, sbc_pct=13.5,
+        mw={"Q1 2026E": 850, "Q2 2026E": 1050, "Q3 2026E": 1300, "Q4 2026E": 1600,
+            "FY 2027E": 2100, "FY 2028E": 2700, "FY 2029E": 3200},
+        rev_per_mw=1.75, gross_margin=69.0,
+        ebitda_margin_2026=47.0, ebitda_margin_2027=49.0,
+        ebitda_margin_2028=51.0, ebitda_margin_2029=53.0,
+        total_debt_2026=47000, total_debt_2027=60000,
+        total_debt_2028=70000, total_debt_2029=67000,
+        interest_rate=8.25, sbc_pct=14.0,
     ),
     "bull": dict(
         label="Bull", color="#10b981",
         rationale=(
-            "Meets/beats guidance; Blackwell pricing premium; IG-rated DDTL + Apr '26 converts "
-            "lower blended interest rate materially; MSFT share falls <50% as OpenAI/Meta ramp. "
-            "Includes Apr '26 confirmed raises ($9.85B). Debt peaks ~$65B FY2028, begins deleveraging. "
-            "ROIC approaches WACC by 2029."
+            "Executes on guidance ($12–13B FY2026). Contracted backlog converts; Blackwell "
+            "pricing holds; MSFT share stable. Note: this is credit bull = equity base. "
+            "Margins expand as scale builds. Debt peaks ~$63B FY2028, deleverages to ~$52B FY2029. "
+            "ICR >3x by 2028. Bonds well-covered; upgrade path to BB possible."
         ),
-        mw={"Q1 2026E": 1100, "Q2 2026E": 1700, "Q3 2026E": 2300, "Q4 2026E": 3000,
-            "FY 2027E": 4000, "FY 2028E": 5500, "FY 2029E": 7000},
-        rev_per_mw=1.95, gross_margin=73.0,
-        ebitda_margin_2026=57.0, ebitda_margin_2027=61.0,
-        ebitda_margin_2028=64.0, ebitda_margin_2029=66.0,
-        total_debt_2026=43850, total_debt_2027=57850,
-        total_debt_2028=64850, total_debt_2029=54850,
-        interest_rate=7.2, sbc_pct=12.0,
+        mw={"Q1 2026E": 1000, "Q2 2026E": 1400, "Q3 2026E": 1900, "Q4 2026E": 2500,
+            "FY 2027E": 3400, "FY 2028E": 4700, "FY 2029E": 6000},
+        rev_per_mw=1.88, gross_margin=72.0,
+        ebitda_margin_2026=53.0, ebitda_margin_2027=57.0,
+        ebitda_margin_2028=60.0, ebitda_margin_2029=63.0,
+        total_debt_2026=44000, total_debt_2027=57000,
+        total_debt_2028=63000, total_debt_2029=52000,
+        interest_rate=7.5, sbc_pct=12.5,
     ),
     "bear": dict(
         label="Bear", color="#ef4444",
         rationale=(
-            "Hyperscaler capex softens; MSFT reduces share >67%; GPU market normalises as supply loosens; "
-            "contract repricing risk. Includes Apr '26 confirmed raises ($9.85B) but capital markets "
-            "close thereafter. Debt spirals to ~$88B+ with no FCF inflection through 2029. "
-            "Liquidity crunch risk. Bonds impaired."
+            "Severe miss — ~55% below guidance. Hyperscaler capex softens; MSFT share >67% cuts; "
+            "GPU supply glut drives pricing to ~$1.55M/MW. Capital markets close after Apr '26. "
+            "Debt spirals to ~$90B with no FCF inflection. ICR <1.5x by 2027. "
+            "Liquidity crunch — covenant breach risk. Material impairment to unsecured bonds."
         ),
-        mw={"Q1 2026E": 800, "Q2 2026E": 1000, "Q3 2026E": 1250, "Q4 2026E": 1500,
-            "FY 2027E": 1900, "FY 2028E": 2400, "FY 2029E": 2800},
-        rev_per_mw=1.70, gross_margin=69.0,
-        ebitda_margin_2026=48.0, ebitda_margin_2027=49.0,
-        ebitda_margin_2028=50.0, ebitda_margin_2029=51.0,
-        total_debt_2026=50850, total_debt_2027=71850,
-        total_debt_2028=87850, total_debt_2029=93850,
-        interest_rate=8.9, sbc_pct=15.0,
+        mw={"Q1 2026E": 750, "Q2 2026E": 850, "Q3 2026E": 1000, "Q4 2026E": 1150,
+            "FY 2027E": 1500, "FY 2028E": 1900, "FY 2029E": 2200},
+        rev_per_mw=1.55, gross_margin=66.0,
+        ebitda_margin_2026=42.0, ebitda_margin_2027=43.0,
+        ebitda_margin_2028=44.0, ebitda_margin_2029=45.0,
+        total_debt_2026=51000, total_debt_2027=68000,
+        total_debt_2028=82000, total_debt_2029=90000,
+        interest_rate=9.5, sbc_pct=16.0,
     ),
 }
 
@@ -72,17 +73,17 @@ _HIST_EQUITY = {2022: -100, 2023: -800,
 
 def get_defaults() -> dict:
     return {
-        "mw": {"Q1 2026E": 1050, "Q2 2026E": 1500, "Q3 2026E": 2000, "Q4 2026E": 2500,
-               "FY 2027E": 3200, "FY 2028E": 4200, "FY 2029E": 5000},
-        "rev_per_mw":       1.85,
-        "gross_margin":     72.0,
-        "ebitda_margin_2026": 55.0, "ebitda_margin_2027": 57.0,
-        "ebitda_margin_2028": 59.0, "ebitda_margin_2029": 61.0,
+        "mw": {"Q1 2026E": 850, "Q2 2026E": 1050, "Q3 2026E": 1300, "Q4 2026E": 1600,
+               "FY 2027E": 2100, "FY 2028E": 2700, "FY 2029E": 3200},
+        "rev_per_mw":       1.75,
+        "gross_margin":     69.0,
+        "ebitda_margin_2026": 47.0, "ebitda_margin_2027": 49.0,
+        "ebitda_margin_2028": 51.0, "ebitda_margin_2029": 53.0,
         "capex_per_mw":     8.0,
         "maint_capex_pct":  3.0,
-        "total_debt_2026":  46850.0, "total_debt_2027":  61850.0,
-        "total_debt_2028":  71850.0, "total_debt_2029":  67850.0,
-        "interest_rate":    8.2,
+        "total_debt_2026":  47000.0, "total_debt_2027":  60000.0,
+        "total_debt_2028":  70000.0, "total_debt_2029":  67000.0,
+        "interest_rate":    8.25,
         "da_pct":           47.0,
         "sbc_pct":          13.5,   # stock-based comp as % of revenue
         "tax_rate":         5.0,
