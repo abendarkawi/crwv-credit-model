@@ -108,20 +108,22 @@ def build_model(a: dict) -> dict:
     Returns dict with DataFrames: 'all', 'quarterly', 'annual'.
     """
     rows = []
-    ppe_running = 20.0   # estimated FY2021 end net PP&E ($M)
+    ppe_running  = 20.0   # estimated FY2021 end net PP&E ($M)
+    ppe_gross_running = 20.0  # cumulative gross capex deployed (never decrements)
 
     # ── FY 2022 / 2023 annual actuals ────────────────────────────────────────
     for yr in [2022, 2023]:
         d = ANNUAL_ACTUALS[yr]
         da = d["revenue"] * a["da_pct"] / 100
         ppe_running = ppe_running + d["capex"] - da
+        ppe_gross_running += d["capex"]
         sbc = d["revenue"] * a.get("sbc_pct", 13.5) / 100
         eq  = _HIST_EQUITY.get(yr, None)
         rows.append(dict(
             period=f"FY {yr}", year=yr, quarter=None, is_actual=True, is_quarterly=False,
             **d, da=da, ebit=d["adj_ebitda"]-da, sbc=sbc,
             cash_ebitda=d["adj_ebitda"]-sbc,
-            ppe_net=ppe_running, book_equity=eq,
+            ppe_net=ppe_running, ppe_gross=ppe_gross_running, book_equity=eq,
             lease_liabilities=_LEASE_EST.get(yr, None),
             receivables=d["revenue"]*30/365,
             accounts_payable=d["revenue"]*20/365,
@@ -135,12 +137,13 @@ def build_model(a: dict) -> dict:
             da  = d["revenue"] * a["da_pct"] / 100
             sbc = d["revenue"] * a.get("sbc_pct", 13.5) / 100
             ppe_running = ppe_running + d["capex"] - da
+            ppe_gross_running += d["capex"]
             eq  = _HIST_EQUITY.get((yr, q), None)
             row = dict(
                 period=f"Q{q} {yr}", year=yr, quarter=q, is_actual=True, is_quarterly=True,
                 **d, da=da, ebit=d["adj_ebitda"]-da, sbc=sbc,
                 cash_ebitda=d["adj_ebitda"]-sbc,
-                ppe_net=ppe_running, book_equity=eq,
+                ppe_net=ppe_running, ppe_gross=ppe_gross_running, book_equity=eq,
                 lease_liabilities=_LEASE_EST.get(yr, None),
                 receivables=d["revenue"]*30/90,
                 accounts_payable=d["revenue"]*20/90,
@@ -149,6 +152,7 @@ def build_model(a: dict) -> dict:
             q_rows.append(row)
         ann = _sum_quarters(f"FY {yr}", yr, True, q_rows)
         ann["ppe_net"]          = q_rows[-1]["ppe_net"]
+        ann["ppe_gross"]        = q_rows[-1]["ppe_gross"]
         ann["book_equity"]      = q_rows[-1]["book_equity"]
         ann["lease_liabilities"]= _LEASE_EST.get(yr)
         ann["receivables"]      = q_rows[-1]["receivables"]
@@ -181,6 +185,7 @@ def build_model(a: dict) -> dict:
         da      = revenue * a["da_pct"] / 100
         ebit    = ebitda - da
         ppe_running = ppe_running + capex - da
+        ppe_gross_running += capex
         pretax  = ebit - interest
         tax     = max(0.0, pretax) * a["tax_rate"] / 100
         ni      = pretax - tax
@@ -205,7 +210,7 @@ def build_model(a: dict) -> dict:
             sbc=sbc, cash_ebitda=cash_eb,
             change_in_debt=d_debt, equity_raised=equity_raised,
             other_financing=other_fin, net_change_cash=net_chg_cash,
-            ppe_net=ppe_running, book_equity=eq_now,
+            ppe_net=ppe_running, ppe_gross=ppe_gross_running, book_equity=eq_now,
             lease_liabilities=_LEASE_EST.get(2026),
             receivables=recv, accounts_payable=ap,
         )
@@ -216,6 +221,7 @@ def build_model(a: dict) -> dict:
     ann26 = _sum_quarters("FY 2026E", 2026, False, q2026)
     ann26.update(total_debt=q2026[-1]["total_debt"], cash=q2026[-1]["cash"],
                  mw_online=q2026[-1]["mw_online"], ppe_net=q2026[-1]["ppe_net"],
+                 ppe_gross=q2026[-1]["ppe_gross"],
                  book_equity=q2026[-1]["book_equity"],
                  lease_liabilities=_LEASE_EST.get(2026),
                  receivables=q2026[-1]["receivables"],
@@ -246,6 +252,7 @@ def build_model(a: dict) -> dict:
         da      = revenue * a["da_pct"] / 100
         ebit    = ebitda - da
         ppe_running = ppe_running + capex - da
+        ppe_gross_running += capex
         pretax  = ebit - interest
         tax     = max(0.0, pretax) * a["tax_rate"] / 100
         ni      = pretax - tax
@@ -270,7 +277,7 @@ def build_model(a: dict) -> dict:
             sbc=sbc, cash_ebitda=cash_eb,
             change_in_debt=d_debt, equity_raised=equity_raised,
             other_financing=other_fin, net_change_cash=net_chg_cash,
-            ppe_net=ppe_running, book_equity=eq_end,
+            ppe_net=ppe_running, ppe_gross=ppe_gross_running, book_equity=eq_end,
             lease_liabilities=_LEASE_EST.get(yr),
             receivables=recv, accounts_payable=ap,
         )
@@ -300,14 +307,16 @@ def build_model(a: dict) -> dict:
                                + df["accounts_payable"].fillna(0) + 500)  # +500 other liab est
     df["nwc"] = df["receivables"].fillna(0) - df["accounts_payable"].fillna(0)
 
-    # ROIC / WACC
-    df["invested_capital"] = df["total_debt"] + a["equity_book"] - df["cash"].fillna(0)
+    # ROIC / WACC — IC = Gross PP&E + NWC (cumulative capex deployed; stable denominator
+    # as net PP&E collapses to zero when D&A >> new capex in later years)
+    df["invested_capital"] = (df["ppe_gross"].fillna(0) + df["nwc"].fillna(0)).clip(lower=500)
     df["nopat"] = df["ebit"].fillna(df["adj_ebitda"] * 0.2) * (1 - a["tax_rate"] / 100)
     df["roic_pct"] = df["nopat"] / df["invested_capital"] * 100
-    total_cap = df["total_debt"] + a["equity_book"]
+    book_eq   = df["book_equity"].fillna(a["equity_book"])
+    total_cap = (df["total_debt"] + book_eq).clip(lower=1)
     at_debt   = a["interest_rate"] / 100 * (1 - a["tax_rate"] / 100)
     df["wacc_pct"] = (df["total_debt"] / total_cap * at_debt * 100
-                      + a["equity_book"] / total_cap * a["cost_of_equity"])
+                      + book_eq / total_cap * a["cost_of_equity"])
 
     # TTM metrics on quarterly series
     qdf = df[df["is_quarterly"]].copy().reset_index(drop=True)

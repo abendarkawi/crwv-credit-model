@@ -158,7 +158,8 @@ st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tabs = st.tabs(["📊 Summary", "📈 Income Statement", "💸 Cash Flow",
-                "🏦 Credit Metrics", "🗂 Balance Sheet", "📐 ROIC / ROA", "🔍 Relative Value"])
+                "🏦 Credit Metrics", "🗂 Balance Sheet", "📐 ROIC / ROA",
+                "🔍 Relative Value", "⚖️ Recovery Analysis"])
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — SUMMARY
@@ -794,7 +795,8 @@ and the business only earns its cost of capital during periods of supply-constra
                                if pd.notna(r["roic_pct"]) else None),
         })
     st.dataframe(pd.DataFrame(roic_tbl).set_index("Period"), use_container_width=True)
-    st.caption("ROIC = NOPAT / IC. NOPAT = EBIT×(1−tax). IC = Debt + Book Equity − Cash. "
+    st.caption("ROIC = NOPAT / Gross PP&E + NWC. NOPAT = EBIT×(1−tax). Gross PP&E = cumulative capex "
+               "deployed (stable denominator vs. net PP&E which collapses as D&A >> capex in later years). "
                "WACC = blended after-tax debt cost × D/V + cost of equity × E/V. All estimates.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -936,4 +938,223 @@ with tabs[6]:
         f'PF gross leverage: {PF_DEBT_M / (latest_q.get("adj_ebitda_ttm",1) or 1):.1f}x LTM EBITDA'
         f'</div>',
         unsafe_allow_html=True
+    )
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 8 — RECOVERY ANALYSIS
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[7]:
+    st.markdown("""**Unsecured Bondholder Recovery — Distressed Waterfall**
+Assumes a restructuring/sale event. Two valuation methods: going-concern (FCF multiple)
+and asset liquidation (GPU fleet at distressed values). Secured DDTL holders are senior
+and assumed to recover at or near par. Unsecured bonds receive the residual.""")
+
+    # ── Capital structure constants ───────────────────────────────────────────
+    TOTAL_SECURED = sum(d["drawn_m"] for d in SECURED_DEBT if d["drawn_m"] > 0)
+    TOTAL_UNSECURED = sum(b["face_m"] for b in BONDS)
+    LEASE_AT_DISTRESS = 8449.0   # FY2025 actual; grows in forward years
+
+    # ── Recovery assumptions sidebar ─────────────────────────────────────────
+    st.markdown("#### Assumptions")
+    ra1, ra2, ra3 = st.columns(3)
+
+    with ra1:
+        st.markdown("**Distress Scenario**")
+        distress_year = st.selectbox("Year of distress", ["FY 2026E","FY 2027E","FY 2028E","FY 2029E"], index=1)
+        distress_sc   = st.selectbox("Model scenario at distress", ["base","bear"], index=1,
+                                     format_func=lambda k: SCENARIOS[k]["label"])
+        # Pull EBITDA and PP&E gross from selected scenario/year
+        _dm = sc_models[distress_sc]["all"]
+        _dr = _dm[_dm["period"] == distress_year]
+        _auto_ebitda = float(_dr["adj_ebitda"].values[0]) if not _dr.empty else 2000.0
+        _auto_ppe_gross = float(_dr["ppe_gross"].values[0]) if not _dr.empty and "ppe_gross" in _dr.columns else 30000.0
+        _auto_debt = float(_dr["total_debt"].values[0]) if not _dr.empty else 50000.0
+
+        distress_ebitda = st.number_input("Distress EBITDA ($M)", 500, 20000,
+                                          int(round(_auto_ebitda / 100) * 100), 100,
+                                          help="Auto-filled from selected scenario/year. Adjust for further stress.")
+        maint_capex_pct = st.slider("Maintenance capex (% EBITDA)", 10, 60, 30,
+                                    help="Ongoing GPU replacement cost. High because GPUs obsolete in 3–5 yrs.")
+        tax_rate_rv = st.slider("Tax rate at distress (%)", 0, 25, 5)
+
+    with ra2:
+        st.markdown("**Going Concern (FCF Multiple)**")
+        fcf_multiple  = st.slider("Unlevered FCF multiple", 4, 16, 10,
+                                  help="10x = reasonable for a contracted GPU cloud with long-dated backlog. "
+                                       "Comps: data center REITs 18-22x, neocloud peers 30x+ (but pre-profit).")
+        reorg_ltv_pct = st.slider("Target LTV for reorganised entity (%)", 40, 75, 60,
+                                  help="Max debt the restructured business can carry. 60% LTV = ~3-4x leverage "
+                                       "on a stabilised EBITDA basis. Determines takeback paper sizing.")
+        cash_pct      = st.slider("Cash vs. takeback paper (% cash)", 0, 100, 40,
+                                  help="What % of recovery is paid in cash vs. new PIK/notes issued by reorg entity. "
+                                       "Depends on liquidity available at restructuring. 40% cash is typical in HY reorg.")
+
+    with ra3:
+        st.markdown("**Asset Liquidation**")
+        gpu_haircut   = st.slider("GPU fleet liquidation haircut (%)", 20, 85, 55,
+                                  help="Discount to gross PP&E in a forced sale. H100/H200 clusters lose value fast "
+                                       "as newer GPUs (Blackwell, Rubin) come to market. 55% haircut = conservative.")
+        lease_cure_pct= st.slider("Lease liabilities cured (%)", 10, 80, 40,
+                                  help="% of lease obligations assumed by acquirer / paid in full. "
+                                       "Remainder rejected in bankruptcy (unsecured claim). 40% cure = base.")
+        admin_cost_pct= st.slider("Admin / restructuring costs (%)", 2, 8, 4,
+                                  help="Legal, advisor, operational costs as % of EV. Typically 3-5% in large HY restructurings.")
+
+    # ── Compute waterfall values ──────────────────────────────────────────────
+    unlevered_fcf   = distress_ebitda * (1 - maint_capex_pct/100) * (1 - tax_rate_rv/100)
+    ev_gc           = unlevered_fcf * fcf_multiple
+    ev_liq          = _auto_ppe_gross * (1 - gpu_haircut/100)
+    lease_claim     = LEASE_AT_DISTRESS * (lease_cure_pct/100)  # portion cured (senior)
+    other_liab      = 500.0
+
+    def _waterfall(ev):
+        admin       = ev * admin_cost_pct / 100
+        post_admin  = ev - admin
+        secured_rec = min(TOTAL_SECURED, post_admin)
+        post_sec    = max(0.0, post_admin - TOTAL_SECURED)
+        lease_rec   = min(lease_claim, post_sec)
+        post_lease  = max(0.0, post_sec - lease_claim)
+        other_rec   = min(other_liab, post_lease)
+        avail_unsec = max(0.0, post_lease - other_liab)
+        rec_pct     = min(100.0, avail_unsec / TOTAL_UNSECURED * 100)
+        rec_cod     = rec_pct / 100
+        # Takeback paper: max new debt = reorg EV × LTV; rest is cash
+        max_new_debt = ev * reorg_ltv_pct / 100
+        cash_avail  = avail_unsec * (cash_pct / 100)
+        paper_face  = avail_unsec * (1 - cash_pct / 100)
+        # Cents on dollar breakdown
+        cash_cod    = cash_avail / TOTAL_UNSECURED
+        paper_cod   = paper_face / TOTAL_UNSECURED
+        return dict(ev=ev, admin=admin, post_admin=post_admin,
+                    secured_rec=secured_rec, post_sec=post_sec,
+                    lease_rec=lease_rec, post_lease=post_lease,
+                    other_rec=other_rec, avail_unsec=avail_unsec,
+                    rec_pct=rec_pct, rec_cod=rec_cod,
+                    cash_cod=cash_cod, paper_cod=paper_cod,
+                    max_new_debt=max_new_debt,
+                    unlevered_fcf=unlevered_fcf)
+
+    gc   = _waterfall(ev_gc)
+    liq  = _waterfall(ev_liq)
+
+    # ── Recovery summary metrics ──────────────────────────────────────────────
+    st.divider()
+    st.markdown(f"**Recovery Summary — {distress_year} distress | {SCENARIOS[distress_sc]['label']} scenario**")
+
+    m1,m2,m3,m4,m5,m6 = st.columns(6)
+    m1.metric("Going Concern EV",   fm(gc["ev"]),   f"{fcf_multiple}x × ${unlevered_fcf:,.0f}M uFCF")
+    m2.metric("Liquidation EV",     fm(liq["ev"]),  f"{100-gpu_haircut}¢ on gross PP&E")
+    m3.metric("Secured Debt (senior)", fm(TOTAL_SECURED), "DDTL 1-5 at par")
+    m4.metric("Unsecured Face",     fm(TOTAL_UNSECURED), f"{len(BONDS)} instruments")
+    m5.metric("GC Recovery",        f"{gc['rec_pct']:.0f}¢ / $1",
+              f"{gc['cash_cod']*100:.0f}¢ cash + {gc['paper_cod']*100:.0f}¢ paper",
+              delta_color="off")
+    m6.metric("Liq. Recovery",      f"{liq['rec_pct']:.0f}¢ / $1",
+              f"{liq['cash_cod']*100:.0f}¢ cash + {liq['paper_cod']*100:.0f}¢ paper",
+              delta_color="off")
+
+    # ── Waterfall charts ─────────────────────────────────────────────────────
+    st.divider()
+    wf1, wf2 = st.columns(2)
+
+    def _make_waterfall(w, title):
+        labels = ["EV", "Admin Costs", "Secured DDTL", "Lease (cured)", "Other Liab", "→ Unsecured"]
+        vals   = [w["ev"], -w["admin"], -w["secured_rec"], -w["lease_rec"], -w["other_rec"], w["avail_unsec"]]
+        meas   = ["absolute","relative","relative","relative","relative","total"]
+        colors = [BLUE, RED, ORANGE, YELLOW, GRAY, GREEN if w["rec_pct"] > 50 else RED]
+        fig = go.Figure(go.Waterfall(
+            measure=meas, x=labels, y=vals,
+            connector=dict(line=dict(color="#374151", width=1)),
+            decreasing=dict(marker_color=RED),
+            increasing=dict(marker_color=GREEN),
+            totals=dict(marker_color=BLUE),
+            texttemplate="%{y:+,.0f}M", textposition="outside",
+            text=[fm(v) for v in vals],
+        ))
+        # Unsecured face reference line
+        fig.add_hline(y=TOTAL_UNSECURED, line_color=ORANGE, line_dash="dash", line_width=1.5,
+                      annotation_text=f"Unsecured face ${TOTAL_UNSECURED/1000:.1f}B",
+                      annotation_position="top right")
+        fig.update_layout(
+            title=dict(text=title, font=dict(size=13, color="#d1d5db")),
+            plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+            font=dict(color="#d1d5db"),
+            yaxis=dict(title="$M", gridcolor="#1f2937"),
+            height=380, margin=dict(t=40,b=30),
+            showlegend=False,
+        )
+        return fig
+
+    with wf1:
+        st.plotly_chart(_make_waterfall(gc, f"Going Concern — {fcf_multiple}x uFCF"), use_container_width=True)
+    with wf2:
+        st.plotly_chart(_make_waterfall(liq, f"Asset Liquidation — {100-gpu_haircut}¢ on Gross PP&E"), use_container_width=True)
+
+    # ── Recovery detail table ────────────────────────────────────────────────
+    st.divider()
+    st.markdown("**Waterfall Detail**")
+    wf_tbl = {
+        "Item": ["Enterprise Value", "Less: Admin / Restructuring",
+                 "Available post-admin",
+                 "Less: Secured DDTL (par)",
+                 "Less: Lease liabilities (cured portion)",
+                 "Less: Other operating liabilities",
+                 "= Available to Unsecured",
+                 "Unsecured face value",
+                 "Recovery % (cents on dollar)",
+                 "  of which: cash",
+                 "  of which: takeback paper (new notes)",
+                 "Implied reorg EV at 60% LTV (new debt capacity)"],
+        "Going Concern": [
+            fm(gc["ev"]), f"({fm(gc['admin'])})", fm(gc["post_admin"]),
+            f"({fm(gc['secured_rec'])})", f"({fm(gc['lease_rec'])})", f"({fm(gc['other_rec'])})",
+            fm(gc["avail_unsec"]), fm(TOTAL_UNSECURED),
+            f"{gc['rec_pct']:.1f}¢ / $1",
+            f"{gc['cash_cod']*100:.1f}¢ / $1  (${gc['cash_cod']*TOTAL_UNSECURED:,.0f}M cash)",
+            f"{gc['paper_cod']*100:.1f}¢ / $1  (${gc['paper_cod']*TOTAL_UNSECURED:,.0f}M face)",
+            fm(gc["max_new_debt"]),
+        ],
+        "Liquidation": [
+            fm(liq["ev"]), f"({fm(liq['admin'])})", fm(liq["post_admin"]),
+            f"({fm(liq['secured_rec'])})", f"({fm(liq['lease_rec'])})", f"({fm(liq['other_rec'])})",
+            fm(liq["avail_unsec"]), fm(TOTAL_UNSECURED),
+            f"{liq['rec_pct']:.1f}¢ / $1",
+            f"{liq['cash_cod']*100:.1f}¢ / $1  (${liq['cash_cod']*TOTAL_UNSECURED:,.0f}M cash)",
+            f"{liq['paper_cod']*100:.1f}¢ / $1  (${liq['paper_cod']*TOTAL_UNSECURED:,.0f}M face)",
+            fm(liq["max_new_debt"]),
+        ],
+    }
+    st.dataframe(pd.DataFrame(wf_tbl).set_index("Item"), use_container_width=True)
+
+    # ── Recovery sensitivity ─────────────────────────────────────────────────
+    st.divider()
+    st.markdown("**Recovery Sensitivity — Going Concern (¢ / $1)**")
+    multiples  = [6, 7, 8, 9, 10, 11, 12, 13, 14]
+    ebitdas    = [int(distress_ebitda * m) for m in [0.5, 0.65, 0.8, 1.0, 1.2, 1.5]]
+    sens_rows  = []
+    for eb in ebitdas:
+        row = {f"EBITDA ${eb/1000:.1f}B": {}}
+        for mult in multiples:
+            ufcf_s = eb * (1 - maint_capex_pct/100) * (1 - tax_rate_rv/100)
+            ev_s   = ufcf_s * mult
+            w_s    = _waterfall(ev_s)
+            row[f"{mult}x"] = f"{w_s['rec_pct']:.0f}¢"
+        sens_rows.append({**{"EBITDA": f"${eb/1000:.1f}B"}, **{f"{m}x": f"{_waterfall(_waterfall.__defaults__ and 0 or 0)['rec_pct']:.0f}¢" for m in multiples}})
+
+    # Build clean sensitivity table
+    sens_data = []
+    for eb in ebitdas:
+        row_d = {"EBITDA at distress": f"${eb/1000:.1f}B"}
+        for mult in multiples:
+            ufcf_s = eb * (1 - maint_capex_pct/100) * (1 - tax_rate_rv/100)
+            ev_s   = ufcf_s * mult
+            w_s    = _waterfall(ev_s)
+            row_d[f"{mult}x"] = f"{w_s['rec_pct']:.0f}¢"
+        sens_data.append(row_d)
+    st.dataframe(pd.DataFrame(sens_data).set_index("EBITDA at distress"), use_container_width=True)
+    st.caption(
+        f"Secured DDTL ${TOTAL_SECURED/1000:.1f}B assumed par recovery. "
+        f"Unsecured face ${TOTAL_UNSECURED/1000:.1f}B. "
+        f"Lease cure {lease_cure_pct}% (${lease_claim/1000:.1f}B). "
+        f"Admin {admin_cost_pct}%. All estimates."
     )
