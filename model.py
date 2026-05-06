@@ -8,17 +8,17 @@ SCENARIOS = {
     "base": dict(
         label="Base", color="#3b82f6",
         rationale=(
-            "Credit conservative — ~30% below FY2026 guidance midpoint ($12.5B). "
-            "Execution delays slow MW ramp; pricing normalises as GPU supply loosens. "
-            "Margins compressed by opex build and power costs. Debt peaks ~$70B FY2028. "
+            "Credit conservative — ~20% below FY2026 guidance midpoint ($12.5B → $10.0B). "
+            "Modest execution delays; pricing normalises as GPU supply loosens. "
+            "Margins compressed vs. mgmt targets. Debt peaks ~$70B FY2028. "
             "ICR 2–3x through forecast — no covenant headroom. "
             "Bonds money-good but zero margin of safety. Credit investor anchor."
         ),
-        mw={"Q1 2026E": 850, "Q2 2026E": 1050, "Q3 2026E": 1300, "Q4 2026E": 1600,
-            "FY 2027E": 2100, "FY 2028E": 2700, "FY 2029E": 3200},
+        mw={"Q1 2026E": 950, "Q2 2026E": 1200, "Q3 2026E": 1550, "Q4 2026E": 2000,
+            "FY 2027E": 2700, "FY 2028E": 3500, "FY 2029E": 4200},
         rev_per_mw=1.75, gross_margin=69.0,
-        ebitda_margin_2026=47.0, ebitda_margin_2027=49.0,
-        ebitda_margin_2028=51.0, ebitda_margin_2029=53.0,
+        ebitda_margin_2026=49.0, ebitda_margin_2027=51.0,
+        ebitda_margin_2028=53.0, ebitda_margin_2029=55.0,
         total_debt_2026=47000, total_debt_2027=60000,
         total_debt_2028=70000, total_debt_2029=67000,
         interest_rate=8.25, sbc_pct=14.0,
@@ -73,12 +73,12 @@ _HIST_EQUITY = {2022: -100, 2023: -800,
 
 def get_defaults() -> dict:
     return {
-        "mw": {"Q1 2026E": 850, "Q2 2026E": 1050, "Q3 2026E": 1300, "Q4 2026E": 1600,
-               "FY 2027E": 2100, "FY 2028E": 2700, "FY 2029E": 3200},
+        "mw": {"Q1 2026E": 950, "Q2 2026E": 1200, "Q3 2026E": 1550, "Q4 2026E": 2000,
+               "FY 2027E": 2700, "FY 2028E": 3500, "FY 2029E": 4200},
         "rev_per_mw":       1.75,
         "gross_margin":     69.0,
-        "ebitda_margin_2026": 47.0, "ebitda_margin_2027": 49.0,
-        "ebitda_margin_2028": 51.0, "ebitda_margin_2029": 53.0,
+        "ebitda_margin_2026": 49.0, "ebitda_margin_2027": 51.0,
+        "ebitda_margin_2028": 53.0, "ebitda_margin_2029": 55.0,
         "capex_per_mw":     8.0,
         "maint_capex_pct":  3.0,
         "total_debt_2026":  47000.0, "total_debt_2027":  60000.0,

@@ -51,10 +51,10 @@ PURPLE="#8b5cf6"
 # ── Scenario slider values (used both for loading into sidebar and for fixed charts) ──
 SCENARIO_SLIDER_VALS = {
     "base": dict(
-        mw_q1=850,  mw_q2=1050, mw_q3=1300, mw_q4=1600,
-        mw_27=2100, mw_28=2700, mw_29=3200,
+        mw_q1=950,  mw_q2=1200, mw_q3=1550, mw_q4=2000,
+        mw_27=2700, mw_28=3500, mw_29=4200,
         rev_per_mw=1.75, gross_margin=69,
-        em_26=47, em_27=49, em_28=51, em_29=53,
+        em_26=49, em_27=51, em_28=53, em_29=55,
         capex_per_mw=8.0, maint_pct=3,
         td_26=47, td_27=60, td_28=70, td_29=67,
         int_rate=8.25, sbc_pct=14, da_pct=47,
