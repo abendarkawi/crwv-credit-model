@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 from model import build_model, get_defaults, get_scenario_assumptions, SCENARIOS
 from data import (PEERS, BONDS, SECURED_DEBT, PRICE_DATA, OPERATING_DATA,
                   RECENT_EVENTS, PF_DEBT_M, PF_LTV_PCT, NEW_DEBT_APRIL_2026_M)
-import bloomberg as bbg
+import market_data as bbg
 
 st.set_page_config(page_title="CoreWeave Credit Model | CRWV", layout="wide",
                    initial_sidebar_state="expanded")
@@ -144,15 +144,15 @@ with st.sidebar:
 
     with st.expander("MW Online — Core Driver", expanded=True):
         st.markdown('<div class="section-hdr">Quarterly 2026</div>', unsafe_allow_html=True)
-        mw_q1 = st.slider("Q1 2026E", 500, 2500, step=50, key="mw_q1",
-            help="Base: 850 MW. Mgmt guided $1.9–2.0B Q1 rev; at $1.75M/MW ≈ 1,090–1,140 MW. "
-                 "Credit base uses lower ramp — execution delays common in GPU buildouts.")
+        st.info("**Q1 2026 actual: 1,000 MW** (>1 GW reported May 8 2026 — slider below unused by model)", icon="✅")
+        mw_q1 = st.slider("Q1 2026 (actual: 1,000 MW)", 500, 2500, step=50, key="mw_q1",
+            help="ACTUAL — 1,000+ MW (>1 GW) reported in Q1 2026 earnings. This slider is not used by the model.")
         mw_q2 = st.slider("Q2 2026E", 500, 3000, step=50, key="mw_q2",
-            help="Base: 1,050 MW. Apr '26 raises confirm continued buildout but ramp timing uncertain.")
+            help="Base: 1,200 MW. Q2 revenue guided $2.45–2.60B; at $1.75M/MW ≈ 1,400–1,490 MW on bull case.")
         mw_q3 = st.slider("Q3 2026E", 500, 4000, step=100, key="mw_q3",
-            help="Base: 1,300 MW. H2 2026 ramp. Bull: 1,900 MW if Blackwell on schedule.")
+            help="Base: 1,550 MW. H2 2026 ramp. Bull: 1,900 MW if Blackwell on schedule.")
         mw_q4 = st.slider("Q4 2026E", 500, 5000, step=100, key="mw_q4",
-            help="Base: 1,600 MW → ~$8.4B FY2026E revenue. Bull: 2,500 MW → ~$12.5B (in-line with guidance).")
+            help="Base: 2,000 MW → ~$12.5B FY2026E implied run-rate. Bull: 2,500 MW in-line with guidance run-rate.")
         st.markdown('<div class="section-hdr">Annual 2027–2029 (avg. active MW)</div>', unsafe_allow_html=True)
         mw_27 = st.slider("FY 2027E", 500, 7000, step=100, key="mw_27",
             help="Base: 2,100 MW. Contracted capacity is 3.1 GW but assumes partial utilisation / delays.")
@@ -249,7 +249,7 @@ live_peers = _bbg["peers"] if _bbg["peers"] else PEERS
 # Bonds: overlay live YTW where available
 _bond_ytw = _bbg["bond_ytw"] or {}
 live_bonds = []
-for b in live_bonds:
+for b in BONDS:
     bd = dict(b)
     if bd["name"] in _bond_ytw:
         bd["ytw"] = _bond_ytw[bd["name"]]
@@ -300,7 +300,7 @@ with tabs[0]:
     with k5: st.metric("Net Leverage",       fx(net_lev),
                        "⚠ high" if net_lev and net_lev > 5 else "ok")
     with k6: st.metric("MW Online",          f"{int(latest_q['mw_online']):,} MW",
-                       f"RPO ~${OPERATING_DATA['backlog_current_b']:.0f}B")
+                       f"RPO ${OPERATING_DATA['rpo_q1_2026_b']:.1f}B (Q1 2026)")
 
     # PF metrics row — reflects April 2026 confirmed raises
     p1, p2, p3, p4 = st.columns(4)
@@ -973,11 +973,11 @@ with tabs[6]:
 
     st.divider()
     op1,op2,op3,op4 = st.columns(4)
-    op1.metric("Current Backlog", f"~${OPERATING_DATA['backlog_current_b']:.0f}B")
+    op1.metric("RPO (Q1 2026 actual)", f"${OPERATING_DATA['rpo_q1_2026_b']:.1f}B")
     op2.metric("FY2025 Backlog",  f"${OPERATING_DATA['backlog_fy2025_b']:.1f}B")
     op3.metric("MSFT Rev Share",  f"{OPERATING_DATA['msft_rev_share_2025']*100:.0f}% (FY2025)")
-    op4.metric("Q1 2026 Interest Guided",
-               f"${OPERATING_DATA['q1_2026_interest_low']}–${OPERATING_DATA['q1_2026_interest_high']}M")
+    op4.metric("Q2 2026 Interest Guided",
+               f"${OPERATING_DATA['q2_2026_interest_low']}–${OPERATING_DATA['q2_2026_interest_high']}M")
 
     # ── Capital structure detail ──────────────────────────────────────────────
     st.divider()

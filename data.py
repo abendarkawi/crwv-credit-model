@@ -28,6 +28,10 @@ QUARTERLY_ACTUALS = {
                     capex=2100.0,  total_debt=18500.0, cash=2000.0, mw_online=700),
     (2025, 4): dict(revenue=1572.0, gross_profit=1063.0,adj_ebitda=898.0, interest_expense=388.0,
                     capex=3809.0,  total_debt=21373.0, cash=3127.0, mw_online=850),
+    # Q1 2026 reported May 8 2026; gross_profit estimated at ~69% (not separately disclosed)
+    # cash estimated from: $3,127M start + OCF $2,984M - CapEx $7,695M + net new debt $3,486M ≈ $1,902M
+    (2026, 1): dict(revenue=2078.0, gross_profit=1434.0, adj_ebitda=1157.0, interest_expense=550.0,
+                    capex=7695.0,  total_debt=24859.0, cash=1900.0, mw_online=1000),
 }
 
 # Peer multiples (as of May 5, 2026) — source: Multiples.vc, Finviz
@@ -116,18 +120,21 @@ PRICE_DATA = dict(
 OPERATING_DATA = dict(
     rpo_fy2024_b=15.1,
     backlog_fy2025_b=66.8,
-    backlog_current_b=95.0,
+    rpo_q1_2026_b=99.4,           # reported May 8 2026 — up from $66.8B at YE2025
     msft_rev_share_2025=0.67,
-    guidance_rev_low=12000,
+    guidance_rev_low=12000,        # FY2026 guidance reaffirmed
     guidance_rev_high=13000,
-    guidance_capex_low=30000,
+    guidance_capex_low=31000,      # updated from $30-35B → $31-35B
     guidance_capex_high=35000,
-    q1_2026_interest_low=510,
-    q1_2026_interest_high=590,
-    next_earnings_quarter="Q1 2026",
-    next_earnings_date_est="Mid-May 2026",
+    q2_2026_rev_low=2450,          # Q2 2026 guidance: $2.45–2.60B
+    q2_2026_rev_high=2600,
+    q2_2026_interest_low=650,      # Q2 2026 interest guidance: $650–730M
+    q2_2026_interest_high=730,
+    q1_2026_ocf=2984,              # Q1 2026 operating cash flow (actual)
+    next_earnings_quarter="Q2 2026",
+    next_earnings_date_est="Mid-August 2026",
 )
 
-# Pro-forma debt/LTV metrics (Q4 2025 actual + April 2026 confirmed raises)
-PF_DEBT_M = 21_373 + NEW_DEBT_APRIL_2026_M   # = 31,223
-PF_LTV_PCT = PF_DEBT_M / (96_000) * 100       # PF Debt / EV ($96B) = 32.5%
+# Pro-forma debt/LTV metrics (Q1 2026 actual Mar 31 + April 2026 confirmed raises)
+PF_DEBT_M = 24_859 + NEW_DEBT_APRIL_2026_M   # = 34,709
+PF_LTV_PCT = PF_DEBT_M / (96_000) * 100       # PF Debt / EV ($96B) = 36.2%

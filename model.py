@@ -68,7 +68,8 @@ _LEASE_EST = {2022: 50, 2023: 500, 2024: 2694, 2025: 8449,
 _HIST_EQUITY = {2022: -100, 2023: -800,
                 (2024,1): -1200, (2024,2): -1500, (2024,3): -1800, (2024,4): -2000,
                 (2025,1): 3500,   # post-IPO
-                (2025,2): 3200, (2025,3): 3600, (2025,4): 5000}
+                (2025,2): 3200, (2025,3): 3600, (2025,4): 5000,
+                (2026,1): 4759}   # reported May 8 2026
 
 
 def get_defaults() -> dict:
@@ -160,18 +161,35 @@ def build_model(a: dict) -> dict:
         ann["accounts_payable"] = q_rows[-1]["accounts_payable"]
         rows.append(ann)
 
-    # ── Projected quarterly 2026 ─────────────────────────────────────────────
-    last    = QUARTERLY_ACTUALS[(2025, 4)]
-    prev_mw   = last["mw_online"]
-    prev_rev  = last["revenue"]
-    prev_debt = last["total_debt"]
-    cash_now  = last["cash"]
-    eq_now    = _HIST_EQUITY[(2025, 4)]
+    # ── Q1 2026 actual ────────────────────────────────────────────────────────
+    d_q1 = QUARTERLY_ACTUALS[(2026, 1)]
+    da_q1  = d_q1["revenue"] * a["da_pct"] / 100
+    sbc_q1 = d_q1["revenue"] * a.get("sbc_pct", 13.5) / 100
+    ppe_running = ppe_running + d_q1["capex"] - da_q1
+    ppe_gross_running += d_q1["capex"]
+    row_q1 = dict(
+        period="Q1 2026", year=2026, quarter=1, is_actual=True, is_quarterly=True,
+        **d_q1, da=da_q1, ebit=d_q1["adj_ebitda"] - da_q1, sbc=sbc_q1,
+        cash_ebitda=d_q1["adj_ebitda"] - sbc_q1,
+        ppe_net=ppe_running, ppe_gross=ppe_gross_running,
+        book_equity=_HIST_EQUITY.get((2026, 1)),
+        lease_liabilities=_LEASE_EST.get(2026),
+        receivables=d_q1["revenue"] * 30 / 90,
+        accounts_payable=d_q1["revenue"] * 20 / 90,
+    )
+    rows.append(row_q1)
+
+    # ── Projected quarterly 2026 (Q2–Q4) ─────────────────────────────────────
+    prev_mw   = d_q1["mw_online"]
+    prev_rev  = d_q1["revenue"]
+    prev_debt = d_q1["total_debt"]
+    cash_now  = d_q1["cash"]
+    eq_now    = _HIST_EQUITY[(2026, 1)]
     debt_2026 = a["total_debt_2026"]
     em_26     = a["ebitda_margin_2026"] / 100
 
-    q2026 = []
-    for q in [1, 2, 3, 4]:
+    q2026 = [row_q1]
+    for q in [2, 3, 4]:
         label   = f"Q{q} 2026E"
         mw      = a["mw"][label]
         revenue = mw * a["rev_per_mw"]
@@ -179,7 +197,8 @@ def build_model(a: dict) -> dict:
         ebitda  = revenue * em_26
         sbc     = revenue * a.get("sbc_pct", 13.5) / 100
         cash_eb = ebitda - sbc
-        debt    = prev_debt + (debt_2026 - last["total_debt"]) * (q / 4)
+        # Interpolate debt linearly from Q1 actual to year-end target over 3 quarters
+        debt    = prev_debt + (debt_2026 - d_q1["total_debt"]) * ((q - 1) / 3)
         interest= debt * a["interest_rate"] / 100 / 4
         new_mw  = max(0.0, mw - prev_mw)
         capex   = new_mw * a["capex_per_mw"] + revenue * a["maint_capex_pct"] / 100
@@ -193,7 +212,7 @@ def build_model(a: dict) -> dict:
         dwc     = -(revenue - prev_rev) * a["wc_days"] / 365 * 4
         cfo     = ebitda - interest - tax + dwc
         fcf     = cfo - capex
-        d_debt  = debt - (q2026[-1]["total_debt"] if q2026 else last["total_debt"])
+        d_debt  = debt - q2026[-1]["total_debt"]
         equity_raised = 0.0
         other_fin     = 0.0
         net_chg_cash  = fcf + d_debt + equity_raised + other_fin
@@ -316,7 +335,7 @@ def build_model(a: dict) -> dict:
     # WACC: use market-value D/V weight anchored to current debt vs. (debt + mkt cap).
     # Book equity drifts upward as NI+SBC accumulate, artificially lifting CoE weight
     # and pushing WACC toward CoE — not how the market prices this capital structure.
-    mkt_cap_m = 70_300.0   # current market cap ($M) — held constant as a structural anchor
+    mkt_cap_m = 75_800.0   # current market cap ($M) — held constant as a structural anchor
     at_debt   = a["interest_rate"] / 100 * (1 - a["tax_rate"] / 100)
     df["_mv_total"] = (df["total_debt"] + mkt_cap_m).clip(lower=1)
     df["wacc_pct"]  = (df["total_debt"] / df["_mv_total"] * at_debt * 100
